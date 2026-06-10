@@ -1,0 +1,137 @@
+@import "tailwindcss";
+
+/* react-day-picker dark theme */
+.exercise-calendar {
+  --rdp-accent-color: #818cf8;
+  --rdp-accent-background-color: #4f46e5;
+  --rdp-outside-opacity: 0.3;
+}
+
+.exercise-calendar .rdp-root {
+  font-size: 13px;
+  color: #9ca3af;
+}
+
+.exercise-calendar .rdp-month_grid {
+  border-spacing: 4px;
+}
+
+.exercise-calendar .rdp-month_caption {
+  font-size: 13px;
+  color: #d1d5db;
+  padding: 0 0 6px;
+}
+
+.exercise-calendar .rdp-nav {
+  gap: 4px;
+}
+
+.exercise-calendar .rdp-button_previous,
+.exercise-calendar .rdp-button_next {
+  color: #9ca3af;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+}
+
+.exercise-calendar .rdp-button_previous:hover,
+.exercise-calendar .rdp-button_next:hover {
+  color: #fff;
+  background: #374151;
+}
+
+.exercise-calendar .rdp-button_previous svg,
+.exercise-calendar .rdp-button_next svg {
+  color: inherit;
+  fill: currentColor;
+}
+
+.exercise-calendar .rdp-chevron {
+  fill: #9ca3af;
+}
+
+.exercise-calendar .rdp-weekday {
+  color: #6b7280;
+  font-size: 11px;
+  font-weight: 500;
+  padding-bottom: 4px;
+}
+
+.exercise-calendar .rdp-day {
+  color: #6b7280;
+  border-radius: 8px;
+}
+
+.exercise-calendar .rdp-day_button {
+  border-radius: 8px;
+}
+
+.exercise-calendar .rdp-day:hover {
+  background: #1f2937;
+}
+
+.exercise-calendar .rdp-today .rdp-day_button {
+  color: #a5b4fc;
+  font-weight: 700;
+  border: 1px solid #6366f1;
+}
+
+.exercise-calendar .rdp-selected .rdp-day_button {
+  background: #4f46e5 !important;
+  color: #fff !important;
+}
+
+.exercise-calendar .rdp-exercise-day .rdp-day_button {
+  background: #22c55e;
+  color: #fff;
+  font-weight: 600;
+}
+
+.exercise-calendar .rdp-exercise-day.rdp-selected .rdp-day_button {
+  background: #16a34a !important;
+  color: #fff !important;
+}
+
+/* Compact variant for side-by-side layout */
+.exercise-calendar-compact .rdp-root {
+  font-size: 11px;
+}
+
+.exercise-calendar-compact .rdp-day {
+  height: 28px;
+}
+
+.exercise-calendar-compact .rdp-day_button {
+  height: 28px;
+  font-size: 11px;
+}
+
+.exercise-calendar-compact .rdp-month_caption {
+  font-size: 11px;
+  padding: 0 0 2px;
+}
+
+.exercise-calendar-compact .rdp-weekday {
+  font-size: 9px;
+  padding-bottom: 2px;
+}
+
+.exercise-calendar-compact .rdp-month_grid {
+  border-spacing: 2px;
+}
+@import "react-grid-layout/css/styles.css";
+@import "react-resizable/css/styles.css";
+
+.react-grid-item.react-grid-placeholder {
+  background: #334155;
+  border-radius: 1rem;
+  opacity: 0.35;
+}
+
+.react-resizable-handle {
+  z-index: 30;
+}
+
+.react-resizable-handle::after {
+  border-color: rgba(148, 163, 184, 0.85) !important;
+}

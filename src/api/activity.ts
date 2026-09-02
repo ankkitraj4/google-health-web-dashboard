@@ -52,3 +52,29 @@ export async function getCaloriesDaily(
 
   return data.rollupDataPoints || [];
 }
+
+export async function getActiveCaloriesDaily(
+  accessToken: string,
+  daysBack: number = 7
+): Promise<CaloriesRollupDataPoint[]> {
+  const dataTypes = ['active-energy-burned', 'active-calories-burned', 'calories-expended'];
+
+  for (const dataType of dataTypes) {
+    try {
+      const data = await healthFetch<RollupResponse<CaloriesRollupDataPoint>>(
+        `/users/me/dataTypes/${dataType}/dataPoints:dailyRollUp`,
+        accessToken,
+        {
+          method: 'POST',
+          body: JSON.stringify(getDailyRollUpBody(daysBack)),
+        }
+      );
+
+      return data.rollupDataPoints || [];
+    } catch {
+      // Try the next known calorie data type name. Some Health tenants expose different names.
+    }
+  }
+
+  return [];
+}

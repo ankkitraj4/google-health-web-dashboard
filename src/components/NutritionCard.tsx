@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, Cell } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, Cell, Legend, LabelList } from 'recharts';
 import { useAuth } from '../auth/AuthContext';
 import { getNutritionData, getNutritionHistory } from '../api/nutrition';
+import { getActiveCaloriesDaily, getCaloriesDaily } from '../api/activity';
 import { useDateRange } from '../context/DateRangeContext';
-import type { NutritionDataPoint } from '../types/health';
+import type { CaloriesRollupDataPoint, NutritionDataPoint } from '../types/health';
 
 import { Card, LoadingCard, ErrorCard, EmptyCard } from './Card';
 
@@ -19,16 +20,19 @@ interface Goals {
   protein: number;
   carbs: number;
   fat: number;
+  deficit: number;
 }
 
-const DEFAULT_GOALS: Goals = { calories: 2000, protein: 120, carbs: 250, fat: 65 };
+const DEFAULT_GOALS: Goals = { calories: 2000, protein: 120, carbs: 250, fat: 65, deficit: 500 };
 const GOALS_KEY = 'nutrition_goals';
 
 function loadGoals(): Goals {
   try {
     const stored = localStorage.getItem(GOALS_KEY);
-    if (stored) return JSON.parse(stored);
-  } catch {}
+    if (stored) return { ...DEFAULT_GOALS, ...JSON.parse(stored) };
+  } catch {
+    // Ignore malformed persisted goals and fall back to defaults.
+  }
   return DEFAULT_GOALS;
 }
 
@@ -118,6 +122,7 @@ function ProgressRow({
 }
 
 interface DayNutrition {
+  iso: string;
   date: string;
   calories: number;
   protein: number;
@@ -125,13 +130,84 @@ interface DayNutrition {
   fat: number;
 }
 
+interface DayDeficit {
+  iso: string;
+  date: string;
+  eaten: number;
+  burned: number;
+  basalBurned: number;
+  activeBurned: number;
+  deficit: number;
+}
+
+interface DayBurnedCalories {
+  basal: number;
+  active: number;
+}
+
+function localDateIso(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function civilDateIso(date?: { year: number; month: number; day: number }): string | null {
+  if (!date) return null;
+  return `${date.year}-${String(date.month).padStart(2, '0')}-${String(date.day).padStart(2, '0')}`;
+}
+
+function nutritionDateIso(point: NutritionDataPoint): string | null {
+  const civilDate = civilDateIso(point.nutritionLog?.interval?.civilStartTime?.date);
+  if (civilDate) return civilDate;
+
+  const time = point.nutritionLog?.interval?.startTime;
+  return time ? localDateIso(new Date(time)) : null;
+}
+
+function kcalFromMetric(value: unknown): number | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const metric = value as { kcalSum?: unknown; kcal?: unknown; calories?: unknown };
+  return numberFromKcalValue(metric.kcalSum) ?? numberFromKcalValue(metric.kcal) ?? numberFromKcalValue(metric.calories);
+}
+
+function numberFromKcalValue(value: unknown): number | undefined {
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  if (value && typeof value === 'object') {
+    const parsedValue = (value as { parsedValue?: unknown }).parsedValue;
+    if (typeof parsedValue === 'number') return parsedValue;
+    const source = (value as { source?: unknown }).source;
+    if (typeof source === 'string') {
+      const parsed = Number(source);
+      return Number.isFinite(parsed) ? parsed : undefined;
+    }
+  }
+  return undefined;
+}
+
+function kcalFromAnyField(point: CaloriesRollupDataPoint, keys: string[]): number | undefined {
+  const record = point as unknown as Record<string, unknown>;
+  for (const key of keys) {
+    const kcal = kcalFromMetric(record[key]);
+    if (kcal !== undefined) return kcal;
+  }
+  return undefined;
+}
+
+function median(values: number[]): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle];
+}
+
 function aggregateByDay(points: NutritionDataPoint[], daysBack: number): DayNutrition[] {
   const byDate: Record<string, MacroSummary> = {};
 
   for (const d of points) {
-    const time = d.nutritionLog?.interval?.startTime;
-    if (!time) continue;
-    const dateStr = time.split('T')[0];
+    const dateStr = nutritionDateIso(d);
+    if (!dateStr) continue;
     if (!byDate[dateStr]) byDate[dateStr] = { calories: 0, protein: 0, carbs: 0, fat: 0 };
     const day = byDate[dateStr];
     const log = d.nutritionLog;
@@ -147,10 +223,11 @@ function aggregateByDay(points: NutritionDataPoint[], daysBack: number): DayNutr
   for (let i = daysBack - 1; i >= 0; i--) {
     const d = new Date();
     d.setDate(d.getDate() - i);
-    const iso = d.toISOString().split('T')[0];
+    const iso = localDateIso(d);
     const label = `${d.getMonth() + 1}/${d.getDate()}`;
     const entry = byDate[iso];
     result.push({
+      iso,
       date: label,
       calories: Math.round(entry?.calories ?? 0),
       protein: Math.round(entry?.protein ?? 0),
@@ -159,6 +236,78 @@ function aggregateByDay(points: NutritionDataPoint[], daysBack: number): DayNutr
     });
   }
   return result;
+}
+
+function aggregateCaloriesByDay(
+  basalPoints: CaloriesRollupDataPoint[],
+  activePoints: CaloriesRollupDataPoint[],
+  daysBack: number
+): Record<string, DayBurnedCalories> {
+  const byDate: Record<string, DayBurnedCalories> = {};
+
+  for (const point of basalPoints) {
+    const iso = civilDateIso(point.civilStartTime?.date) ?? (point.startTime ? localDateIso(new Date(point.startTime)) : null);
+    if (!iso) continue;
+    byDate[iso] = {
+      basal: Math.round(kcalFromAnyField(point, ['basalEnergyBurned', 'basalMetabolicRate', 'totalCalories', 'totalEnergyBurned', 'calories', 'energy']) ?? 0),
+      active: 0,
+    };
+  }
+
+  for (const point of activePoints) {
+    const iso = civilDateIso(point.civilStartTime?.date) ?? (point.startTime ? localDateIso(new Date(point.startTime)) : null);
+    if (!iso) continue;
+    const current = byDate[iso] ?? { basal: 0, active: 0 };
+    byDate[iso] = {
+      ...current,
+      active: Math.round(kcalFromAnyField(point, ['activeEnergyBurned', 'activeCaloriesBurned', 'totalCalories', 'totalEnergyBurned', 'calories', 'energy']) ?? 0),
+    };
+  }
+
+  const plausibleBasals = Object.values(byDate)
+    .map((day) => day.basal - day.active)
+    .filter((value) => value >= 1200 && value <= 2800);
+  const baselineBasal = median(plausibleBasals);
+
+  for (const day of Object.values(byDate)) {
+    if (day.active <= 0 || baselineBasal === 0) continue;
+
+    const derivedBasal = day.basal - day.active;
+    const rawLooksLikeTotal = derivedBasal >= 1200 && derivedBasal <= 2800 && day.basal > baselineBasal + Math.max(300, day.active * 0.5);
+    if (rawLooksLikeTotal) {
+      day.basal = Math.round(derivedBasal);
+    }
+  }
+
+  const complete: Record<string, DayBurnedCalories> = {};
+  for (let i = daysBack - 1; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const iso = localDateIso(d);
+    complete[iso] = byDate[iso] ?? { basal: 0, active: 0 };
+  }
+
+  return complete;
+}
+
+function buildDeficitHistory(nutrition: DayNutrition[], burnedByDay: Record<string, DayBurnedCalories>): DayDeficit[] {
+  return nutrition.map((day) => {
+    const burned = burnedByDay[day.iso] ?? { basal: 0, active: 0 };
+    const totalBurned = burned.basal + burned.active;
+    return {
+      iso: day.iso,
+      date: day.date,
+      eaten: day.calories,
+      burned: totalBurned,
+      basalBurned: burned.basal,
+      activeBurned: burned.active,
+      deficit: totalBurned - day.calories,
+    };
+  });
+}
+
+function deficitGoalMet(deficit: number, goal: number): boolean {
+  return goal >= 0 ? deficit >= goal : deficit <= goal;
 }
 
 interface FoodEntry {
@@ -226,7 +375,7 @@ const MEAL_COLORS: Record<string, string> = {
   Other: '#6b7280',
 };
 
-type NutritionView = 'today' | 'foods' | 'history';
+type NutritionView = 'today' | 'foods' | 'history' | 'deficit';
 
 export function NutritionCard() {
   const { accessToken } = useAuth();
@@ -234,6 +383,7 @@ export function NutritionCard() {
   const [macros, setMacros] = useState<MacroSummary | null>(null);
   const [foods, setFoods] = useState<FoodEntry[]>([]);
   const [history, setHistory] = useState<DayNutrition[]>([]);
+  const [deficitHistory, setDeficitHistory] = useState<DayDeficit[]>([]);
   const [goals, setGoals] = useState<Goals>(loadGoals);
   const [editing, setEditing] = useState(false);
   const [view, setView] = useState<NutritionView>('today');
@@ -245,9 +395,11 @@ export function NutritionCard() {
     setLoading(true);
     Promise.all([
       getNutritionData(accessToken),
-      getNutritionHistory(accessToken, daysBack),
+      getNutritionHistory(accessToken, Math.max(daysBack, 7)),
+      getCaloriesDaily(accessToken, Math.max(daysBack, 7)),
+      getActiveCaloriesDaily(accessToken, Math.max(daysBack, 7)),
     ])
-      .then(([todayData, historyData]) => {
+      .then(([todayData, historyData, burnedData, activeBurnedData]) => {
         const summary: MacroSummary = { calories: 0, protein: 0, carbs: 0, fat: 0 };
         for (const d of todayData) {
           const log = d.nutritionLog;
@@ -260,7 +412,10 @@ export function NutritionCard() {
         }
         setMacros(summary);
         setFoods(parseFoodEntries(todayData));
-        setHistory(aggregateByDay(historyData, daysBack));
+        const nutritionHistory = aggregateByDay(historyData, Math.max(daysBack, 7));
+        const deficitRows = buildDeficitHistory(nutritionHistory.slice(-7), aggregateCaloriesByDay(burnedData, activeBurnedData, Math.max(daysBack, 7)));
+        setHistory(nutritionHistory.slice(-daysBack));
+        setDeficitHistory(deficitRows);
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
@@ -279,12 +434,18 @@ export function NutritionCard() {
   const daysWithData = history.filter((d) => d.calories > 0);
   const daysMetCalories = daysWithData.filter((d) => getGoalStatus(d.calories, goals.calories) === 'met').length;
   const daysMetProtein = daysWithData.filter((d) => getGoalStatus(d.protein, goals.protein) === 'met').length;
+  const todayDeficit = deficitHistory[deficitHistory.length - 1];
+  const deficitDaysWithData = deficitHistory.filter((d) => d.eaten > 0 || d.burned > 0);
+  const deficitDaysMet = deficitDaysWithData.filter((d) => deficitGoalMet(d.deficit, goals.deficit)).length;
+  const averageDeficit = deficitDaysWithData.length > 0
+    ? Math.round(deficitDaysWithData.reduce((sum, d) => sum + d.deficit, 0) / deficitDaysWithData.length)
+    : 0;
 
   return (
-    <Card title="Nutrition" subtitle={view === 'today' ? 'Today' : view === 'foods' ? 'Food Log' : `Last ${daysBack} days`}>
+    <Card title="Nutrition" subtitle={view === 'today' ? 'Today' : view === 'foods' ? 'Food Log' : view === 'deficit' ? 'Deficit - Last 7 days' : `Last ${daysBack} days`}>
       <div className="flex items-center justify-between mb-3">
         <div className="flex bg-gray-800 rounded-lg p-0.5 text-xs">
-          {(['today', 'foods', 'history'] as const).map((v) => (
+          {(['today', 'foods', 'history', 'deficit'] as const).map((v) => (
             <button
               key={v}
               onClick={() => setView(v)}
@@ -359,7 +520,7 @@ export function NutritionCard() {
             </div>
           )}
         </>
-      ) : (
+      ) : view === 'history' ? (
         <>
           <div className="h-28 mb-2">
             <ResponsiveContainer>
@@ -404,6 +565,92 @@ export function NutritionCard() {
               <ProgressRow label="Fat" current={0} goal={goals.fat} unit="g" color="#ef4444" editing={true} onGoalChange={(v) => updateGoal('fat', v)} />
             </div>
           )}
+        </>
+      ) : (
+        <>
+          <div className="grid grid-cols-3 gap-2 mb-3">
+            <div className="bg-gray-800/50 rounded-lg p-2">
+              <p className="text-lg font-bold text-white">{todayDeficit ? Math.round(todayDeficit.deficit).toLocaleString() : 0}</p>
+              <p className="text-[11px] text-gray-400">today kcal</p>
+            </div>
+            <div className="bg-gray-800/50 rounded-lg p-2">
+              <p className="text-lg font-bold text-white">{averageDeficit.toLocaleString()}</p>
+              <p className="text-[11px] text-gray-400">avg kcal</p>
+            </div>
+            <div className="bg-gray-800/50 rounded-lg p-2">
+              <p className="text-lg font-bold text-white">{deficitDaysMet}<span className="text-xs font-normal text-gray-400">/{deficitDaysWithData.length}</span></p>
+              <p className="text-[11px] text-gray-400">goal met</p>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between gap-2 mb-2 text-xs text-gray-400">
+            <span>Using total burn = basal + active</span>
+            {editing && (
+              <label className="flex items-center gap-2">
+                goal
+                <input
+                  type="number"
+                  value={goals.deficit}
+                  onChange={(e) => updateGoal('deficit', parseInt(e.target.value) || 0)}
+                  className="w-20 bg-gray-800 border border-gray-600 rounded px-2 py-1 text-right text-white text-sm"
+                />
+              </label>
+            )}
+          </div>
+
+          <p className="mb-2 text-[11px] text-gray-500">
+            Goal: {goals.deficit >= 0 ? `${goals.deficit} kcal deficit` : `${Math.abs(goals.deficit)} kcal surplus`}
+          </p>
+
+          <p className="mb-1 text-[11px] font-medium text-gray-300">Burned vs intake</p>
+          <div className="min-h-44 flex-1">
+            <ResponsiveContainer>
+              <BarChart data={deficitHistory}>
+                <XAxis dataKey="date" tick={{ fill: '#6b7280', fontSize: 10 }} axisLine={false} tickLine={false} />
+                <YAxis hide />
+                <Tooltip
+                  contentStyle={{ backgroundColor: '#1e293b', border: 'none', borderRadius: '8px', color: '#fff', fontSize: '11px' }}
+                  formatter={(value, name) => {
+                    const labels: Record<string, string> = {
+                      basalBurned: 'Basal burn',
+                      activeBurned: 'Active burn',
+                      eaten: 'Intake',
+                      deficit: 'Deficit',
+                    };
+                    return [`${Number(value).toLocaleString()} kcal`, labels[String(name)] ?? String(name)];
+                  }}
+                  labelFormatter={(label) => {
+                    const day = deficitHistory.find((d) => d.date === label);
+                    if (!day) return label;
+                    return `${label} - ${deficitGoalMet(day.deficit, goals.deficit) ? 'Goal met' : 'Goal missed'}`;
+                  }}
+                />
+                <Legend wrapperStyle={{ fontSize: 10, color: '#9ca3af' }} iconSize={8} />
+                <Bar dataKey="basalBurned" name="Basal" stackId="burned" fill="#2563eb" barSize={14} />
+                <Bar dataKey="activeBurned" name="Active" stackId="burned" fill="#38bdf8" radius={[4, 4, 0, 0]} barSize={14} />
+                <Bar dataKey="eaten" name="Intake" fill="#f59e0b" radius={[4, 4, 0, 0]} barSize={14} />
+                <Bar dataKey="deficit" name="Deficit" barSize={10}>
+                  <LabelList dataKey="deficit" position="top" formatter={(value: unknown) => Number(value).toLocaleString()} style={{ fill: '#d1d5db', fontSize: 10 }} />
+                  {deficitHistory.map((d) => (
+                    <Cell
+                      key={d.iso}
+                      fill={d.eaten === 0 && d.burned === 0 ? '#1f2937' : deficitGoalMet(d.deficit, goals.deficit) ? '#22c55e' : '#ef4444'}
+                    />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+
+          <div className="flex justify-between text-[11px] text-gray-400 px-1 mt-2">
+            <span>Burned: <span className="text-white">{todayDeficit ? todayDeficit.burned.toLocaleString() : 0}</span></span>
+            <span>Eaten: <span className="text-white">{todayDeficit ? todayDeficit.eaten.toLocaleString() : 0}</span></span>
+            <span>Net: <span className={todayDeficit && todayDeficit.deficit < 0 ? 'text-red-400' : 'text-white'}>{todayDeficit ? todayDeficit.deficit.toLocaleString() : 0}</span></span>
+          </div>
+          <div className="flex justify-between text-[10px] text-gray-500 px-1 mt-1">
+            <span>Basal: {todayDeficit ? todayDeficit.basalBurned.toLocaleString() : 0}</span>
+            <span>Active burn: {todayDeficit ? todayDeficit.activeBurned.toLocaleString() : 0}</span>
+          </div>
         </>
       )}
     </Card>

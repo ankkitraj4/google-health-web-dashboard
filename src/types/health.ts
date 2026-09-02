@@ -82,16 +82,37 @@ export interface StepsRollupDataPoint {
   };
 }
 
+export type KcalValue = number | string | { source?: string; parsedValue?: number };
+
 export interface CaloriesRollupDataPoint {
   civilStartTime?: CivilDateTime;
   civilEndTime?: CivilDateTime;
   startTime?: string;
   endTime?: string;
+  energy?: {
+    kcalSum: KcalValue;
+  };
+  calories?: {
+    kcalSum: KcalValue;
+  };
   activeEnergyBurned?: {
-    kcalSum: number;
+    kcalSum: KcalValue;
+  };
+  activeCaloriesBurned?: {
+    kcalSum: KcalValue;
+  };
+  basalEnergyBurned?: {
+    kcalSum: KcalValue;
+  };
+  basalMetabolicRate?: {
+    kcalSum: KcalValue;
+    kcal?: KcalValue;
   };
   totalCalories?: {
-    kcalSum: number;
+    kcalSum: KcalValue;
+  };
+  totalEnergyBurned?: {
+    kcalSum: KcalValue;
   };
 }
 

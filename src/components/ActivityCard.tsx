@@ -19,6 +19,18 @@ interface StepsGoals {
 const GOALS_KEY = 'steps_goals';
 const DEFAULT_GOALS: StepsGoals = { daily: 10000, weekly: 70000 };
 
+function kcalValue(value: unknown): number {
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string') return Number(value) || 0;
+  if (value && typeof value === 'object') {
+    const parsedValue = (value as { parsedValue?: unknown }).parsedValue;
+    if (typeof parsedValue === 'number') return parsedValue;
+    const source = (value as { source?: unknown }).source;
+    if (typeof source === 'string') return Number(source) || 0;
+  }
+  return 0;
+}
+
 function loadGoals(): StepsGoals {
   try {
     const stored = localStorage.getItem(GOALS_KEY);
@@ -56,7 +68,7 @@ export function ActivityCard() {
         setStepsData(mapped.reverse());
 
         const calTotal = calories.reduce(
-          (sum: number, c: CaloriesRollupDataPoint) => sum + (c.totalCalories?.kcalSum || c.activeEnergyBurned?.kcalSum || 0),
+          (sum: number, c: CaloriesRollupDataPoint) => sum + (kcalValue(c.totalCalories?.kcalSum) || kcalValue(c.activeEnergyBurned?.kcalSum)),
           0
         );
         setTotalCalories(Math.round(calTotal));

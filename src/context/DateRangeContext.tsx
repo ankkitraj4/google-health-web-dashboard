@@ -10,6 +10,7 @@ const DateRangeContext = createContext<DateRangeState>({
   setDaysBack: () => {},
 });
 
+// eslint-disable-next-line react-refresh/only-export-components -- hook co-located with its provider intentionally
 export function useDateRange() {
   return useContext(DateRangeContext);
 }

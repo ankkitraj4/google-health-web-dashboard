@@ -19,6 +19,7 @@ const AuthContext = createContext<AuthState>({
   refreshToken: async () => null,
 });
 
+// eslint-disable-next-line react-refresh/only-export-components -- co-located with AuthProvider intentionally; this whole file is replaced by session-cookie auth in plan milestone M3.
 export function useAuth() {
   return useContext(AuthContext);
 }
@@ -28,6 +29,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  // Holds the latest doRefresh so the recursive reschedule below doesn't close
+  // over doRefresh before its own declaration finishes.
+  const doRefreshRef = useRef<(token: string) => Promise<string | null>>(undefined);
 
   const doRefresh = useCallback(async (token: string): Promise<string | null> => {
     try {
@@ -41,7 +45,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
       const refreshMs = Math.max((tokens.expires_in - 300) * 1000, 10000);
       const rt = tokens.refresh_token || token;
-      refreshTimerRef.current = setTimeout(() => { doRefresh(rt); }, refreshMs);
+      refreshTimerRef.current = setTimeout(() => { doRefreshRef.current?.(rt); }, refreshMs);
       return tokens.access_token;
     } catch {
       setError('Session expired. Please log in again.');
@@ -50,6 +54,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return null;
     }
   }, []);
+  // doRefresh has a stable identity (empty deps above), so this effect only
+  // ever runs once — it just keeps the ref in sync outside of render.
+  useEffect(() => {
+    doRefreshRef.current = doRefresh;
+  }, [doRefresh]);
 
   // Expose a refresh function for the API client to call on 401
   const refreshTokenFn = useCallback(async (): Promise<string | null> => {
@@ -64,6 +73,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const errorParam = url.searchParams.get('error');
 
     if (errorParam) {
+      // Reacting to a one-time OAuth redirect param read from the URL on mount;
+      // this whole effect is replaced by a backend session check in plan milestone M3.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setError(`OAuth error: ${errorParam}`);
       setIsLoading(false);
       window.history.replaceState({}, '', '/');

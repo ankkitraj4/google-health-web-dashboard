@@ -47,6 +47,9 @@ export function DailyHrCard() {
 
   useEffect(() => {
     if (!accessToken) return;
+    // Reset state for a new fetch; this whole fetch-effect pattern moves to
+    // backend-driven data in plan milestone M6.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     setError(null);
 

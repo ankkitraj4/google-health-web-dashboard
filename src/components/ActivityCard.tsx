@@ -35,7 +35,9 @@ function loadGoals(): StepsGoals {
   try {
     const stored = localStorage.getItem(GOALS_KEY);
     if (stored) return JSON.parse(stored);
-  } catch {}
+  } catch {
+    // Ignore parse errors and fall back to defaults.
+  }
   return DEFAULT_GOALS;
 }
 

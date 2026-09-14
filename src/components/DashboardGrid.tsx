@@ -21,7 +21,9 @@ function loadLayouts(): ResponsiveLayouts {
   try {
     const stored = localStorage.getItem(LAYOUT_KEY);
     if (stored) return JSON.parse(stored);
-  } catch {}
+  } catch {
+    // Ignore parse errors and fall back to an empty layout.
+  }
   return {};
 }
 

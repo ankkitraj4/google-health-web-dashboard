@@ -104,19 +104,27 @@ function labelFitnessLevel(level?: string) {
   return level.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-function latestByDate<T extends { [key: string]: any }>(items: T[], key: keyof T): T | undefined {
+type DatedField = { date?: { year: number; month: number; day: number } };
+
+function latestByDate<T, K extends keyof T>(items: T[], key: K): T | undefined {
   return [...items].sort((a, b) => {
-    const da = a[key]?.date;
-    const db = b[key]?.date;
+    const da = (a[key] as DatedField | undefined)?.date;
+    const db = (b[key] as DatedField | undefined)?.date;
     const av = da ? new Date(da.year, da.month - 1, da.day).getTime() : 0;
     const bv = db ? new Date(db.year, db.month - 1, db.day).getTime() : 0;
     return bv - av;
   })[0];
 }
 
-function CardioTooltip({ active, payload, label }: any) {
+interface CardioTooltipProps {
+  active?: boolean;
+  payload?: Array<{ payload: DayData }>;
+  label?: string;
+}
+
+function CardioTooltip({ active, payload, label }: CardioTooltipProps) {
   if (!active || !payload?.length) return null;
-  const data = payload[0].payload as DayData;
+  const data = payload[0].payload;
 
   return (
     <div className="bg-slate-800 rounded-lg px-3 py-2 text-xs shadow-lg">
@@ -150,6 +158,9 @@ export function CardioCard() {
   useEffect(() => {
     if (!accessToken) return;
 
+    // Reset state for a new fetch; this whole fetch-effect pattern moves to
+    // backend-driven data in plan milestone M6.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     setError(null);
     Promise.allSettled([
@@ -316,6 +327,9 @@ export function HeartZonesCard() {
   useEffect(() => {
     if (!accessToken) return;
 
+    // Reset state for a new fetch; this whole fetch-effect pattern moves to
+    // backend-driven data in plan milestone M6.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     setError(null);
     Promise.allSettled([

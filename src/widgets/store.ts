@@ -22,7 +22,9 @@ export function loadInstances(): WidgetInstance[] {
   try {
     const stored = localStorage.getItem(INSTANCES_KEY);
     if (stored) return JSON.parse(stored);
-  } catch {}
+  } catch {
+    // Ignore parse errors and fall back to the default widget set.
+  }
   return DEFAULT_INSTANCES;
 }
 

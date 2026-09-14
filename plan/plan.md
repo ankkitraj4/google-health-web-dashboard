@@ -20,11 +20,18 @@ Two facts from actually reading the fork's source (via the GitHub API) shape the
 - Run `pnpm install`, `pnpm lint`, `pnpm build`, `pnpm dev`.
 - **Test:** all four commands exit 0, and the dev server serves a login screen in the browser. Treat this as "the toolchain works," not "the app is correct" — it's a 2-commit template project with no test suite, so a clean build proves less than it would in a mature repo.
 
-### M2 — Google Cloud project validated with a raw API call (no app code involved)
+### M2 — Google Cloud project validated with a raw API call (no app code involved) ✅ done 2026-09-14
 **Goal:** Know exactly what data your Google account/Fitbit Air actually exposes before building anything against assumptions.
 - Create a Google Cloud project, enable the Google Health API, configure the OAuth consent screen, a local redirect URI, a test user, and the read-only scopes the fork already lists (sleep, health metrics/measurements, nutrition, activity and fitness, settings, profile).
 - Manually complete one OAuth flow (browser + `curl`/Postman is fine — no app UI needed) and make one authenticated `GET`/`POST` against `health.googleapis.com/v4`, e.g. `/users/me/dataTypes/steps/dataPoints:dailyRollUp`.
 - **Test:** you have a saved response showing your real `healthUserId`, the data types that actually returned data (not just the ones you requested), units, and timestamp format. Compare this against the data-type names `src/api/activity.ts`, `sleep.ts`, and `heart-rate.ts` assume, and write down any mismatches to fix in M4.
+
+**Findings from the real run**, to carry into M3+:
+- The new Google Auth Platform console (Branding/Audience/Data Access/Clients) requires each restricted scope to be explicitly added under **Data Access**, not just requested in the auth URL — an undeclared restricted scope makes Google hard-block the *entire* request with "Access blocked: has not completed the Google verification process," not just drop that one scope.
+- Adding a test user under **Audience** has a UI trap: typing the email turns it into a chip but doesn't save until **Save** is clicked *after* the chip is confirmed — a first "Save" click right after typing can silently no-op, leaving "0 users" while looking like it worked. Always re-check the Test users list shows the row after saving.
+- With those two fixed, Testing-mode + test-user access worked exactly as documented — no full verification/CASA assessment needed for personal dev use under the 100-user cap.
+- `googlehealth.settings.readonly` (needed for `pairedDevices`) was left out of the working scope set — add and test it separately in M4/M5 if device-provenance data is wanted.
+- Confirmed against a real Google Fitbit Air: `dataTypes/steps/dataPoints:dailyRollUp` and `dataTypes/sleep/dataPoints` match the fork's `activity.ts`/`sleep.ts` shapes exactly — `steps.countSum` as a numeric string, sleep responses include full `STAGES` breakdown (AWAKE/LIGHT/DEEP/REM) with a `summary` block, and `dataSource.device.displayName: "Google Fitbit Air"` / `platform: "FITBIT"` confirm real device provenance. Timestamps carry explicit UTC offsets (e.g. `"7200s"`) — build M5's timezone handling off the offset field, not an assumed local zone.
 
 ### M3 — Backend owns auth; browser never sees a token
 **Goal:** A minimal backend that completes Google OAuth server-side and gives the browser only a session cookie — no health data yet.

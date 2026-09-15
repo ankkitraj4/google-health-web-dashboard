@@ -56,12 +56,20 @@ Two facts from actually reading the fork's source (via the GitHub API) shape the
 
 **Verified with a real login, not just code review:** the dashboard's Activity card showed 6,684 steps today, and the SQLite `metrics` table's historical rows (9/11–9/14: 298, 5821, 8627, 5690) matched M2's raw API findings exactly. Reloading the page re-fetched and re-upserted without adding rows — today's value updated in place (6684→6731 as real steps accrued between the two fetches) and the table stayed at 5 rows throughout, confirming the idempotent-upsert design works, not just compiles. `ActivityCard` now fetches only steps through the backend; its calorie stat shows "coming soon" rather than being left silently broken, since calories still needs the same treatment in M5.
 
-### M5 — Remaining core metrics, with dedup proven
+### M5 — Remaining core metrics, with dedup proven ✅ done 2026-09-15
 **Goal:** Sleep, heart rate/resting heart rate, exercise, calories, distance, and active minutes all flow through the same adapter pattern, and syncing twice doesn't duplicate data.
 - Extend the adapter metric-by-metric, reusing `src/api/sleep.ts`, `heart-rate.ts`, `resting-hr.ts`, `cardio.ts`, `exercise.ts` request shapes as a base, correcting any data-type names flagged in M2/M4.
 - Implement idempotent upsert / source-aware dedup.
 - Add a hot sync (last 7–14 days) as the default; leave backfill for M8.
 - **Test:** run the sync command/endpoint twice in a row. Row counts in the database do not increase on the second run (for unchanged data). Each metric either returns real data or an explicit reason (no-scope, no-data, unsupported) — never a silent empty response.
+
+**Findings from a real probe against a live token** (temporary script, deleted after use — see M2's precedent of validating before coding):
+- `active-minutes` dailyRollUp has no single total field, only a per-activity-level breakdown (LIGHT/MODERATE/VIGOROUS); the backend sums these into one daily value.
+- `total-calories.kcalSum` comes back as a **number**, unlike `steps.countSum` which is a numeric **string** — an easy silent bug if assumed uniform.
+- `exercise` does not support server-side filtering by start time (confirmed via a real 400 `INVALID_DATA_POINT_FILTER`) — fetch a page and filter client-side by date, exactly what the fork's own `listExercises` already did.
+- There is **no standalone daily "distance" data type** in this API. Distance only exists per exercise session (`metricsSummary.distanceMillimeters`), confirmed with real values (e.g. 1,190,700mm on a walking session). The plan's "distance" metric is delivered through exercise records, not a dedicated rollup.
+
+**Verified with a real login:** Sleep, Resting Heart Rate, and Activity's calories stat all render real data matching the probe exactly (71 bpm resting HR, matching stage-by-stage sleep minutes). Reloading the page (steps/calories/resting-heart-rate) and calling `/api/exercise` twice directly both left every row count unchanged (`metrics`: 5/5/4 rows, `exercise_sessions`: 6 rows) — dedup confirmed across every metric type, not just steps. Active-minutes and exercise are backend-complete and endpoint-verified but have no dedicated card yet — wiring the remaining UI (including a proper Fitbit Air overview) is M6's job. `NutritionCard`/`CardioCard`/`HeartZonesCard` stay out of scope (not in the plan's declared v1 metric list) and are left non-functional, same as before M5 — not a new regression.
 
 ### M6 — Frontend fully cut over to the backend
 **Goal:** The dashboard renders real data through the backend only; no direct-to-Google calls remain in the shipped app.

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, Cell } from 'recharts';
 import { useAuth } from '../auth/AuthContext';
-import { getStepsDailyFromBackend } from '../api/activity';
+import { getStepsDailyFromBackend, getCaloriesDailyFromBackend } from '../api/activity';
 import { Card, LoadingCard, ErrorCard, EmptyCard } from './Card';
 import { useDateRange } from '../context/DateRangeContext';
 
@@ -36,9 +36,7 @@ export function ActivityCard() {
   const { isAuthenticated } = useAuth();
   const { daysBack } = useDateRange();
   const [stepsData, setStepsData] = useState<DayData[]>([]);
-  // Calories still needs to move through the backend (plan milestone M5) —
-  // it's not wired up in M4's narrower "one real metric" scope, so it's
-  // shown as unavailable rather than fetched with a token we no longer have.
+  const [totalCalories, setTotalCalories] = useState(0);
   const [goals, setGoals] = useState<StepsGoals>(loadGoals);
   const [editing, setEditing] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -47,13 +45,14 @@ export function ActivityCard() {
   useEffect(() => {
     if (!isAuthenticated) return;
 
-    getStepsDailyFromBackend(daysBack)
-      .then((points) => {
-        const mapped = points.map((p) => {
+    Promise.all([getStepsDailyFromBackend(daysBack), getCaloriesDailyFromBackend(daysBack)])
+      .then(([steps, calories]) => {
+        const mapped = steps.map((p) => {
           const [, month, day] = p.date.split('-');
           return { date: `${Number(month)}/${Number(day)}`, steps: p.value };
         });
         setStepsData(mapped);
+        setTotalCalories(Math.round(calories.reduce((sum, c) => sum + c.value, 0)));
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
@@ -90,8 +89,8 @@ export function ActivityCard() {
             <p className="text-sm text-gray-400">steps today</p>
           </div>
           <div>
-            <p className="text-3xl font-bold text-gray-600">—</p>
-            <p className="text-sm text-gray-400">kcal burned (coming soon)</p>
+            <p className="text-3xl font-bold">{totalCalories.toLocaleString()}</p>
+            <p className="text-sm text-gray-400">kcal burned ({daysBack}d)</p>
           </div>
           <div>
             <p className="text-3xl font-bold">{daysHit}<span className="text-sm font-normal text-gray-400">/{weekDays} days</span></p>

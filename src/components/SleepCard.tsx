@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, LabelList } from 'recharts';
 import { useAuth } from '../auth/AuthContext';
-import { getSleepData } from '../api/sleep';
-import type { SleepDataPoint } from '../types/health';
+import { getSleepFromBackend, type BackendSleepNight } from '../api/sleep';
 import { Card, LoadingCard, ErrorCard, EmptyCard } from './Card';
 import { calcSleepScore } from '../utils/sleep-score';
 import { useDateRange } from '../context/DateRangeContext';
@@ -41,22 +40,15 @@ interface NightData {
 }
 
 
-function parseNight(sp: SleepDataPoint): NightData {
-  const stages = sp.sleep.summary?.stagesSummary || [];
-  const get = (type: string) => parseInt(stages.find((s) => s.type === type)?.minutes || '0');
-  const deep = get('DEEP');
-  const rem = get('REM');
-  const light = get('LIGHT');
-  const awake = get('AWAKE');
-  const total = parseInt(sp.sleep.summary?.minutesAsleep || '0');
+function parseNight(night: BackendSleepNight): NightData {
+  const deep = night.stageMinutes.DEEP ?? 0;
+  const rem = night.stageMinutes.REM ?? 0;
+  const light = night.stageMinutes.LIGHT ?? 0;
+  const awake = night.stageMinutes.AWAKE ?? 0;
+  const total = night.minutesAsleep;
 
-  // Extract date from endTime ISO string (most reliable)
-  let dateStr = '';
-  const endTime = sp.sleep.interval?.endTime;
-  if (endTime) {
-    const d = new Date(endTime);
-    dateStr = `${d.getMonth() + 1}/${d.getDate()}`;
-  }
+  const d = new Date(night.endTime);
+  const dateStr = `${d.getMonth() + 1}/${d.getDate()}`;
 
   return { date: dateStr, total, deep, light, rem, awake, score: calcSleepScore(deep, rem, light, awake) };
 }
@@ -83,7 +75,7 @@ function SleepTooltip({ active, payload, label }: any) {
 }
 
 export function SleepCard() {
-  const { accessToken } = useAuth();
+  const { isAuthenticated } = useAuth();
   const [nights, setNights] = useState<NightData[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -91,23 +83,23 @@ export function SleepCard() {
   const { daysBack } = useDateRange();
 
   useEffect(() => {
-    if (!accessToken) return;
+    if (!isAuthenticated) return;
     // Reset state for a new fetch; this whole fetch-effect pattern moves to
     // backend-driven data in plan milestone M6.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
-    getSleepData(accessToken, daysBack)
+    getSleepFromBackend(daysBack)
       .then((data) => {
+        // Backend already returns nights oldest-first (see normalizeSleep).
         const parsed = data
-          .filter((d) => d.sleep.summary?.stagesSummary?.length)
+          .filter((n) => Object.keys(n.stageMinutes).length > 0)
           .map(parseNight)
-          .filter((n) => n.total >= 120) // exclude naps
-          .reverse();
+          .filter((n) => n.total >= 120); // exclude naps
         setNights(parsed);
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
-  }, [accessToken, daysBack]);
+  }, [isAuthenticated, daysBack]);
 
   if (loading) return <LoadingCard title="Sleep" />;
   if (error) return <ErrorCard title="Sleep" error={error} />;

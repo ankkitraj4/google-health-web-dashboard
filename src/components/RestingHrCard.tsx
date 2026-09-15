@@ -1,36 +1,35 @@
 import { useEffect, useState } from 'react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { useAuth } from '../auth/AuthContext';
-import { getRestingHrData } from '../api/resting-hr';
-import type { RestingHrDataPoint } from '../types/health';
+import { getRestingHrFromBackend } from '../api/resting-hr';
 import { Card, LoadingCard, ErrorCard, EmptyCard } from './Card';
 import { useDateRange } from '../context/DateRangeContext';
 
 export function RestingHrCard() {
-  const { accessToken } = useAuth();
+  const { isAuthenticated } = useAuth();
   const { daysBack } = useDateRange();
-  const [data, setData] = useState<RestingHrDataPoint[]>([]);
+  const [chartData, setChartData] = useState<Array<{ date: string; bpm: number }>>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!accessToken) return;
-    getRestingHrData(accessToken, daysBack)
-      .then(setData)
+    if (!isAuthenticated) return;
+    getRestingHrFromBackend(daysBack)
+      .then((points) => {
+        setChartData(
+          points.map((p) => {
+            const [, month, day] = p.date.split('-');
+            return { date: `${Number(month)}/${Number(day)}`, bpm: p.value };
+          })
+        );
+      })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
-  }, [accessToken, daysBack]);
+  }, [isAuthenticated, daysBack]);
 
   if (loading) return <LoadingCard title="Resting Heart Rate" />;
   if (error) return <ErrorCard title="Resting Heart Rate" error={error} />;
-  if (data.length === 0) return <EmptyCard title="Resting Heart Rate" />;
-
-  const chartData = data
-    .map((d) => ({
-      date: `${d.dailyRestingHeartRate.date.month}/${d.dailyRestingHeartRate.date.day}`,
-      bpm: parseInt(d.dailyRestingHeartRate.beatsPerMinute || '0'),
-    }))
-    .reverse();
+  if (chartData.length === 0) return <EmptyCard title="Resting Heart Rate" />;
 
   const latest = chartData[chartData.length - 1]?.bpm || 0;
 

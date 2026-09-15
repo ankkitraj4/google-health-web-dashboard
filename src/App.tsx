@@ -1,17 +1,11 @@
-import { useEffect } from 'react';
 import { useAuth } from './auth/AuthContext';
-import { setRefreshFn } from './api/client';
 import { LoginScreen } from './components/LoginScreen';
 import { Layout } from './components/Layout';
 import { DashboardGrid } from './components/DashboardGrid';
 import { DateRangeProvider } from './context/DateRangeContext';
 
 export default function App() {
-  const { isAuthenticated, isLoading, error, refreshToken } = useAuth();
-
-  useEffect(() => {
-    setRefreshFn(refreshToken);
-  }, [refreshToken]);
+  const { isAuthenticated, isLoading, error } = useAuth();
 
   if (isLoading) {
     return (

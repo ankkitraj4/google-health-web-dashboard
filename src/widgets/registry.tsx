@@ -8,7 +8,6 @@ import { NutritionCard } from '../components/NutritionCard';
 import { ActivityCard } from '../components/ActivityCard';
 import { ExerciseCard } from '../components/ExerciseCard';
 import { DailyHrCard } from '../components/DailyHrCard';
-import { DebugCard } from '../components/DebugCard';
 
 export interface WidgetDef {
   type: string;
@@ -30,9 +29,12 @@ export const WIDGET_REGISTRY: Record<string, WidgetDef> = {
   'heart-zones': { type: 'heart-zones', name: 'Heart Zones', description: 'HR zone distribution and thresholds', component: HeartZonesCard, defaultW: 4, defaultH: 4, minW: 3, minH: 3 },
   nutrition: { type: 'nutrition', name: 'Nutrition', description: 'Daily macros and nutrition history', component: NutritionCard, defaultW: 4, defaultH: 5, minW: 3, minH: 4 },
   activity: { type: 'activity', name: 'Activity', description: 'Steps and calories', component: ActivityCard, defaultW: 4, defaultH: 5, minW: 3, minH: 4 },
-  exercise: { type: 'exercise', name: 'Exercises', description: 'Exercise calendar and details', component: ExerciseCard, defaultW: 4, defaultH: 5, minW: 3, minH: 4 },
+  // Wider than the other default cards (matches daily-hr's treatment): its
+  // two-pane calendar+detail-list layout gets squeezed into an unreadable
+  // single-character-per-line column at the narrower defaultW:4 other cards
+  // use — found and fixed while verifying M6 end to end.
+  exercise: { type: 'exercise', name: 'Exercises', description: 'Exercise calendar and details', component: ExerciseCard, defaultW: 8, defaultH: 6, minW: 6, minH: 4 },
   'daily-hr': { type: 'daily-hr', name: 'Daily Heart Rate', description: 'Full-day HR graph with zones', component: DailyHrCard, defaultW: 8, defaultH: 5, minW: 4, minH: 4 },
-  debug: { type: 'debug', name: 'Debug Info', description: 'Raw API data for profile, settings, devices', component: DebugCard, defaultW: 6, defaultH: 8, minW: 4, minH: 4 },
 };
 
 export const WIDGET_TYPES = Object.keys(WIDGET_REGISTRY);

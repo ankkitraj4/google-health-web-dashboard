@@ -35,7 +35,22 @@ authRouter.get('/callback', async (req, res) => {
     }
     const identity = (await identityRes.json()) as { healthUserId: string; legacyUserId?: string };
 
-    const userId = upsertUserByHealthId(identity.healthUserId, identity.legacyUserId ?? null, null);
+    // Best-effort: a display name is a nicety for the header, not required
+    // for the app to function, so a failure here shouldn't fail login.
+    let displayName: string | null = null;
+    try {
+      const userinfoRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+        headers: { Authorization: `Bearer ${tokens.access_token}` },
+      });
+      if (userinfoRes.ok) {
+        const userinfo = (await userinfoRes.json()) as { name?: string };
+        displayName = userinfo.name ?? null;
+      }
+    } catch {
+      // Ignore — displayName stays null.
+    }
+
+    const userId = upsertUserByHealthId(identity.healthUserId, identity.legacyUserId ?? null, null, displayName);
     storeTokens(userId, tokens);
 
     const sessionId = createSession(userId);

@@ -4,8 +4,8 @@ import { DayPicker } from 'react-day-picker';
 import 'react-day-picker/style.css';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceArea, ReferenceLine } from 'recharts';
 import { useAuth } from '../auth/AuthContext';
-import { listExercises, getExerciseHeartRate, type ExerciseDataPoint, type HeartRateZoneDurations, type HeartRateSample } from '../api/exercise';
-import { getDailyHeartRateZones } from '../api/cardio';
+import { getExercisesFromBackend, exerciseLabel, type ExerciseSession } from '../api/exercise';
+import { getHeartRateRangeFromBackend, getHeartRateZonesFromBackend, type HeartRateSample } from '../api/heart-rate';
 import { Card, LoadingCard, ErrorCard } from './Card';
 
 function formatDuration(startTime: string, endTime: string): string {
@@ -21,18 +21,8 @@ function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
 }
 
-function exerciseLabel(type: string): string {
-  return type.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
 function dateKey(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
-function parseDurationSeconds(dur?: string): number {
-  if (!dur) return 0;
-  const match = dur.match(/^(-?\d+(?:\.\d+)?)s$/);
-  return match ? Number(match[1]) : 0;
 }
 
 function fmtZoneMins(secs: number): string {
@@ -157,20 +147,17 @@ function HrChart({ samples, startTime, zones = DEFAULT_ZONES }: { samples: Heart
 
 // -- Modal --
 
-function ExerciseModal({ exercise, onClose, accessToken }: { exercise: ExerciseDataPoint; onClose: () => void; accessToken: string }) {
-  const e = exercise.exercise;
-  const m = e.metricsSummary;
-  const duration = formatDuration(e.interval.startTime, e.interval.endTime);
-  const dist = m?.distanceMillimeters ? (Number(m.distanceMillimeters) / 1_000_000).toFixed(2) : null;
-  const cal = m?.caloriesKcal ?? m?.caloriesBurned ?? null;
-  const avgHr = m?.averageHeartRateBeatsPerMinute;
-  const zones = m?.heartRateZoneDurations;
-  const elevation = m?.elevationGainMillimeters ? (Number(m.elevationGainMillimeters) / 1000).toFixed(0) : null;
-  const pace = m?.averagePaceSecondsPerMeter ? (Number(m.averagePaceSecondsPerMeter) * 1000) : null;
-  const speed = m?.averageSpeedMillimetersPerSecond ? (Number(m.averageSpeedMillimetersPerSecond) / 1000 * 3.6) : null;
-  const vo2 = m?.runVo2Max;
-  const steps = m?.steps ? parseInt(m.steps, 10) : null;
-  const azm = m?.activeZoneMinutes ? parseInt(m.activeZoneMinutes, 10) : null;
+function ExerciseModal({ session, onClose }: { session: ExerciseSession; onClose: () => void }) {
+  const duration = formatDuration(session.startTime, session.endTime);
+  const dist = session.distanceMm ? (session.distanceMm / 1_000_000).toFixed(2) : null;
+  const cal = session.caloriesKcal;
+  const avgHr = session.avgHeartRate;
+  const elevation = session.elevationGainMm ? (session.elevationGainMm / 1000).toFixed(0) : null;
+  const pace = session.avgPaceSPerM != null ? session.avgPaceSPerM * 1000 : null;
+  const speed = session.avgSpeedMmPerS != null ? (session.avgSpeedMmPerS / 1000) * 3.6 : null;
+  const vo2 = session.vo2Max;
+  const steps = session.steps;
+  const azm = session.activeZoneMinutes;
 
   const [hrData, setHrData] = useState<HeartRateSample[]>([]);
   const [hrLoading, setHrLoading] = useState(true);
@@ -178,30 +165,18 @@ function ExerciseModal({ exercise, onClose, accessToken }: { exercise: ExerciseD
 
   useEffect(() => {
     Promise.all([
-      getExerciseHeartRate(accessToken, e.interval.startTime, e.interval.endTime),
-      getDailyHeartRateZones(accessToken, 7).catch(() => []),
+      getHeartRateRangeFromBackend(session.startTime, session.endTime),
+      getHeartRateZonesFromBackend(7).catch(() => null),
     ])
-      .then(([samples, zoneDays]) => {
+      .then(([samples, zones]) => {
         setHrData(samples);
-        if (zoneDays.length > 0) {
-          const latest = zoneDays[zoneDays.length - 1];
-          const zoneList = latest.dailyHeartRateZones?.heartRateZones || [];
-          const get = (type: string) => {
-            const z = zoneList.find((z) => z.heartRateZoneType === type);
-            return z ? parseInt(z.minBeatsPerMinute, 10) : 0;
-          };
-          const light = get('LIGHT');
-          const moderate = get('MODERATE');
-          const vigorous = get('VIGOROUS');
-          const peak = get('PEAK');
-          if (light && moderate && vigorous && peak) {
-            setHrZones({ light, moderate, vigorous, peak });
-          }
+        if (zones?.light && zones?.moderate && zones?.vigorous && zones?.peak) {
+          setHrZones({ light: zones.light, moderate: zones.moderate, vigorous: zones.vigorous, peak: zones.peak });
         }
       })
       .catch(() => {})
       .finally(() => setHrLoading(false));
-  }, [accessToken, e.interval.startTime, e.interval.endTime]);
+  }, [session.startTime, session.endTime]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
@@ -211,19 +186,19 @@ function ExerciseModal({ exercise, onClose, accessToken }: { exercise: ExerciseD
       >
         <div className="flex justify-between items-start mb-4">
           <div>
-            <h3 className="text-lg font-semibold text-white">{e.displayName || exerciseLabel(e.exerciseType)}</h3>
-            <p className="text-sm text-gray-400">{exerciseLabel(e.exerciseType)}</p>
+            <h3 className="text-lg font-semibold text-white">{session.displayName || exerciseLabel(session.exerciseType)}</h3>
+            <p className="text-sm text-gray-400">{exerciseLabel(session.exerciseType)}</p>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-white text-xl cursor-pointer leading-none">&times;</button>
         </div>
 
         <div className="grid grid-cols-2 gap-2 mb-4 text-sm">
-          <Stat label="Date" value={new Date(e.interval.startTime).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })} />
-          <Stat label="Time" value={`${formatTime(e.interval.startTime)} - ${formatTime(e.interval.endTime)}`} />
+          <Stat label="Date" value={new Date(session.startTime).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })} />
+          <Stat label="Time" value={`${formatTime(session.startTime)} - ${formatTime(session.endTime)}`} />
           <Stat label="Duration" value={duration} />
           {dist && <Stat label="Distance" value={`${dist} km`} />}
           {cal != null && <Stat label="Calories" value={`${Math.round(cal)} kcal`} />}
-          {avgHr && <Stat label="Avg HR" value={`${avgHr} bpm`} />}
+          {avgHr != null && <Stat label="Avg HR" value={`${avgHr} bpm`} />}
           {elevation && <Stat label="Elevation" value={`${elevation} m`} />}
           {pace != null && <Stat label="Pace" value={`${Math.floor(pace / 60)}:${String(Math.round(pace % 60)).padStart(2, '0')} /km`} />}
           {speed != null && <Stat label="Speed" value={`${speed.toFixed(1)} km/h`} />}
@@ -232,20 +207,20 @@ function ExerciseModal({ exercise, onClose, accessToken }: { exercise: ExerciseD
           {vo2 != null && <Stat label="VO2 max" value={vo2.toFixed(1)} />}
         </div>
 
-        {zones && <ZoneBar zones={zones} />}
+        <ZoneBar zones={session.hrZoneSeconds} />
 
         {hrLoading ? (
           <div className="flex items-center justify-center h-20 mt-4">
             <div className="w-5 h-5 border-2 border-gray-600 border-t-white rounded-full animate-spin" />
           </div>
         ) : hrData.length > 0 ? (
-          <HrChart samples={hrData} startTime={e.interval.startTime} zones={hrZones} />
+          <HrChart samples={hrData} startTime={session.startTime} zones={hrZones} />
         ) : null}
 
-        {e.notes && (
+        {session.notes && (
           <div className="mt-3 border-t border-gray-800 pt-3">
             <p className="text-xs text-gray-400">Notes</p>
-            <p className="text-sm text-gray-300 mt-1">{e.notes}</p>
+            <p className="text-sm text-gray-300 mt-1">{session.notes}</p>
           </div>
         )}
       </div>
@@ -262,12 +237,12 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
-function ZoneBar({ zones }: { zones: HeartRateZoneDurations }) {
+function ZoneBar({ zones }: { zones: ExerciseSession['hrZoneSeconds'] }) {
   const items = [
-    { label: 'Light', value: parseDurationSeconds(zones.lightTime), color: '#38bdf8' },
-    { label: 'Moderate', value: parseDurationSeconds(zones.moderateTime), color: '#f59e0b' },
-    { label: 'Vigorous', value: parseDurationSeconds(zones.vigorousTime), color: '#fb7185' },
-    { label: 'Peak', value: parseDurationSeconds(zones.peakTime), color: '#ef4444' },
+    { label: 'Light', value: zones.light ?? 0, color: '#38bdf8' },
+    { label: 'Moderate', value: zones.moderate ?? 0, color: '#f59e0b' },
+    { label: 'Vigorous', value: zones.vigorous ?? 0, color: '#fb7185' },
+    { label: 'Peak', value: zones.peak ?? 0, color: '#ef4444' },
   ];
   const total = items.reduce((s, i) => s + i.value, 0);
   if (total === 0) return null;
@@ -294,26 +269,26 @@ function ZoneBar({ zones }: { zones: HeartRateZoneDurations }) {
 // -- Card --
 
 export function ExerciseCard() {
-  const { accessToken } = useAuth();
-  const [exercises, setExercises] = useState<ExerciseDataPoint[]>([]);
+  const { isAuthenticated } = useAuth();
+  const [exercises, setExercises] = useState<ExerciseSession[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedDate, setSelectedDate] = useState<Date | undefined>();
   const [month, setMonth] = useState(new Date());
-  const [modalExercise, setModalExercise] = useState<ExerciseDataPoint | null>(null);
+  const [modalExercise, setModalExercise] = useState<ExerciseSession | null>(null);
 
   useEffect(() => {
-    if (!accessToken) return;
-    listExercises(accessToken)
+    if (!isAuthenticated) return;
+    getExercisesFromBackend()
       .then(setExercises)
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
-  }, [accessToken]);
+  }, [isAuthenticated]);
 
   const exercisesByDate = useMemo(() => {
-    const map: Record<string, ExerciseDataPoint[]> = {};
+    const map: Record<string, ExerciseSession[]> = {};
     for (const ex of exercises) {
-      const d = new Date(ex.exercise.interval.startTime);
+      const d = new Date(ex.startTime);
       const key = dateKey(d);
       if (!map[key]) map[key] = [];
       map[key].push(ex);
@@ -389,24 +364,20 @@ export function ExerciseCard() {
                 <p className="text-gray-600 text-xs">No exercises</p>
               ) : (
                 <div className="space-y-1">
-                  {selectedExercises.map((ex, i) => {
-                    const e = ex.exercise;
-                    const duration = formatDuration(e.interval.startTime, e.interval.endTime);
-                    const m = e.metricsSummary;
-                    const dist = m?.distanceMillimeters
-                      ? `${(Number(m.distanceMillimeters) / 1_000_000).toFixed(2)} km`
-                      : null;
-                    const cal = m?.caloriesKcal ?? m?.caloriesBurned;
+                  {selectedExercises.map((session, i) => {
+                    const duration = formatDuration(session.startTime, session.endTime);
+                    const dist = session.distanceMm ? `${(session.distanceMm / 1_000_000).toFixed(2)} km` : null;
+                    const cal = session.caloriesKcal;
 
                     return (
                       <button
-                        key={ex.name || i}
-                        onClick={() => setModalExercise(ex)}
+                        key={session.sourceId || i}
+                        onClick={() => setModalExercise(session)}
                         className="w-full text-left bg-gray-800/50 rounded px-2 py-1.5 hover:bg-gray-700/50 transition-colors cursor-pointer"
                       >
-                        <p className="text-white text-xs font-medium truncate">{e.displayName || exerciseLabel(e.exerciseType)}</p>
+                        <p className="text-white text-xs font-medium truncate">{session.displayName || exerciseLabel(session.exerciseType)}</p>
                         <p className="text-gray-500 text-[10px]">
-                          {formatTime(e.interval.startTime)} · {duration}
+                          {formatTime(session.startTime)} · {duration}
                           {dist && ` · ${dist}`}
                           {cal != null && ` · ${Math.round(cal)} kcal`}
                         </p>
@@ -422,8 +393,8 @@ export function ExerciseCard() {
         </div>
       </div>
     </Card>
-    {modalExercise && accessToken && createPortal(
-      <ExerciseModal exercise={modalExercise} onClose={() => setModalExercise(null)} accessToken={accessToken} />,
+    {modalExercise && createPortal(
+      <ExerciseModal session={modalExercise} onClose={() => setModalExercise(null)} />,
       document.body
     )}
     </>

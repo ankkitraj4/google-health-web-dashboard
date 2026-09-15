@@ -1,9 +1,7 @@
 import { useEffect, useState } from 'react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceArea, ReferenceLine } from 'recharts';
 import { useAuth } from '../auth/AuthContext';
-import { getDailyHeartRate, type HeartRateSample } from '../api/heart-rate';
-import { getDailyHeartRateZones } from '../api/cardio';
-import type { DailyHeartRateZonesDataPoint } from '../types/health';
+import { getDailyHeartRateFromBackend, getHeartRateZonesFromBackend, type HeartRateSample, type HeartRateZones } from '../api/heart-rate';
 import { Card, LoadingCard, ErrorCard, EmptyCard } from './Card';
 
 interface ZoneThresholds {
@@ -21,24 +19,15 @@ interface ChartPoint {
   bpm: number;
 }
 
-function parseZones(zoneDays: DailyHeartRateZonesDataPoint[]): ZoneThresholds | null {
-  if (zoneDays.length === 0) return null;
-  const latest = zoneDays[zoneDays.length - 1];
-  const zoneList = latest.dailyHeartRateZones?.heartRateZones || [];
-  const get = (type: string) => {
-    const z = zoneList.find((z) => z.heartRateZoneType === type);
-    return z ? parseInt(z.minBeatsPerMinute, 10) : 0;
-  };
-  const light = get('LIGHT');
-  const moderate = get('MODERATE');
-  const vigorous = get('VIGOROUS');
-  const peak = get('PEAK');
+function parseZones(zones: HeartRateZones | null): ZoneThresholds | null {
+  if (!zones) return null;
+  const { light, moderate, vigorous, peak } = zones;
   if (light && moderate && vigorous && peak) return { light, moderate, vigorous, peak };
   return null;
 }
 
 export function DailyHrCard() {
-  const { accessToken } = useAuth();
+  const { isAuthenticated } = useAuth();
   const [samples, setSamples] = useState<HeartRateSample[]>([]);
   const [zones, setZones] = useState<ZoneThresholds>(DEFAULT_ZONES);
   const [loading, setLoading] = useState(true);
@@ -46,25 +35,23 @@ export function DailyHrCard() {
   const [selectedDay, setSelectedDay] = useState<Date>(new Date());
 
   useEffect(() => {
-    if (!accessToken) return;
-    // Reset state for a new fetch; this whole fetch-effect pattern moves to
-    // backend-driven data in plan milestone M6.
+    if (!isAuthenticated) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     setError(null);
 
     Promise.all([
-      getDailyHeartRate(accessToken, selectedDay),
-      getDailyHeartRateZones(accessToken, 7).catch(() => []),
+      getDailyHeartRateFromBackend(selectedDay),
+      getHeartRateZonesFromBackend(7).catch(() => null),
     ])
-      .then(([hrSamples, zoneDays]) => {
+      .then(([hrSamples, zoneData]) => {
         setSamples(hrSamples);
-        const parsed = parseZones(zoneDays);
+        const parsed = parseZones(zoneData);
         if (parsed) setZones(parsed);
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
-  }, [accessToken, selectedDay]);
+  }, [isAuthenticated, selectedDay]);
 
   function prevDay() {
     const d = new Date(selectedDay);

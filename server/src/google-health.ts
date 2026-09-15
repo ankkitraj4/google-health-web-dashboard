@@ -79,6 +79,62 @@ export function fetchCaloriesDailyRollup(accessToken: string, daysBack: number) 
   return fetchDailyRollup<CaloriesRollupDataPoint>(accessToken, 'total-calories', daysBack);
 }
 
+export interface HeartRateDataPoint {
+  heartRate?: { sampleTime?: { physicalTime?: string }; beatsPerMinute?: string };
+}
+
+interface HrListResponse {
+  dataPoints?: HeartRateDataPoint[];
+  nextPageToken?: string;
+}
+
+// Ported from the fork's src/api/heart-rate.ts / exercise.ts (they used the
+// identical query shape for both the standalone daily card and per-exercise
+// HR charts) — intraday heart-rate samples for an arbitrary [start, end)
+// range, paginated client-side same as the original.
+export async function fetchHeartRateSamples(
+  accessToken: string,
+  startIso: string,
+  endIso: string
+): Promise<Array<{ time: string; bpm: number }>> {
+  const filter = `heart_rate.sample_time.physical_time >= "${startIso}" AND heart_rate.sample_time.physical_time < "${endIso}"`;
+  const samples: Array<{ time: string; bpm: number }> = [];
+  let pageToken: string | undefined;
+
+  do {
+    const params = new URLSearchParams({ filter, page_size: '10000' });
+    if (pageToken) params.set('page_token', pageToken);
+    const data = await healthFetch<HrListResponse>(`/users/me/dataTypes/heart-rate/dataPoints?${params}`, accessToken);
+    for (const d of data.dataPoints ?? []) {
+      if (d.heartRate?.sampleTime?.physicalTime && d.heartRate?.beatsPerMinute) {
+        samples.push({ time: d.heartRate.sampleTime.physicalTime, bpm: parseInt(d.heartRate.beatsPerMinute, 10) });
+      }
+    }
+    pageToken = data.nextPageToken;
+  } while (pageToken);
+
+  return samples.sort((a, b) => a.time.localeCompare(b.time));
+}
+
+export interface DailyHeartRateZonesDataPoint {
+  dailyHeartRateZones?: {
+    date?: { year: number; month: number; day: number };
+    heartRateZones?: Array<{ heartRateZoneType: string; minBeatsPerMinute: string; maxBeatsPerMinute: string }>;
+  };
+}
+
+export async function fetchDailyHeartRateZones(accessToken: string, daysBack: number): Promise<DailyHeartRateZonesDataPoint[]> {
+  const startDate = new Date();
+  startDate.setDate(startDate.getDate() - daysBack);
+  const filter = `daily_heart_rate_zones.date >= "${startDate.toISOString().split('T')[0]}"`;
+  const params = new URLSearchParams({ filter, page_size: '100' });
+  const data = await healthFetch<{ dataPoints?: DailyHeartRateZonesDataPoint[] }>(
+    `/users/me/dataTypes/daily-heart-rate-zones/dataPoints?${params}`,
+    accessToken
+  );
+  return data.dataPoints ?? [];
+}
+
 export interface RestingHrDataPoint {
   dailyRestingHeartRate?: { date?: { year: number; month: number; day: number }; beatsPerMinute?: string };
 }
@@ -127,7 +183,20 @@ export interface ExerciseDataPoint {
   exercise?: {
     interval?: { startTime?: string; endTime?: string };
     exerciseType?: string;
-    metricsSummary?: { caloriesKcal?: number; distanceMillimeters?: number; averageHeartRateBeatsPerMinute?: string };
+    displayName?: string;
+    notes?: string;
+    metricsSummary?: {
+      caloriesKcal?: number;
+      distanceMillimeters?: number;
+      averageHeartRateBeatsPerMinute?: string;
+      steps?: string;
+      averageSpeedMillimetersPerSecond?: number;
+      averagePaceSecondsPerMeter?: number;
+      elevationGainMillimeters?: number;
+      activeZoneMinutes?: string;
+      runVo2Max?: number;
+      heartRateZoneDurations?: { lightTime?: string; moderateTime?: string; vigorousTime?: string; peakTime?: string };
+    };
   };
 }
 

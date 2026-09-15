@@ -17,5 +17,6 @@ sessionRouter.get('/api/session', (req: AuthedRequest, res) => {
   res.json({
     authenticated: true,
     healthUserId: user.health_user_id,
+    displayName: user.display_name,
   });
 });

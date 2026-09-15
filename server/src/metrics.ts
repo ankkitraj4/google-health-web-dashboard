@@ -33,13 +33,48 @@ db.exec(`
     start_time INTEGER NOT NULL,
     end_time INTEGER NOT NULL,
     exercise_type TEXT NOT NULL,
+    display_name TEXT,
+    notes TEXT,
     calories_kcal REAL,
     distance_mm INTEGER,
     avg_heart_rate INTEGER,
+    steps INTEGER,
+    avg_speed_mm_per_s REAL,
+    avg_pace_s_per_m REAL,
+    elevation_gain_mm INTEGER,
+    active_zone_minutes INTEGER,
+    vo2_max REAL,
+    hr_zone_light_s REAL,
+    hr_zone_moderate_s REAL,
+    hr_zone_vigorous_s REAL,
+    hr_zone_peak_s REAL,
     updated_at INTEGER NOT NULL,
     PRIMARY KEY (user_id, source_id)
   );
 `);
+
+// Adds columns introduced after the initial exercise_sessions table shipped
+// (plan milestone M6), so existing dev databases upgrade in place instead of
+// needing a manual drop.
+const exerciseSessionColumns = new Set(
+  (db.prepare(`PRAGMA table_info(exercise_sessions)`).all() as Array<{ name: string }>).map((c) => c.name)
+);
+for (const [column, ddl] of [
+  ['display_name', 'ALTER TABLE exercise_sessions ADD COLUMN display_name TEXT'],
+  ['notes', 'ALTER TABLE exercise_sessions ADD COLUMN notes TEXT'],
+  ['steps', 'ALTER TABLE exercise_sessions ADD COLUMN steps INTEGER'],
+  ['avg_speed_mm_per_s', 'ALTER TABLE exercise_sessions ADD COLUMN avg_speed_mm_per_s REAL'],
+  ['avg_pace_s_per_m', 'ALTER TABLE exercise_sessions ADD COLUMN avg_pace_s_per_m REAL'],
+  ['elevation_gain_mm', 'ALTER TABLE exercise_sessions ADD COLUMN elevation_gain_mm INTEGER'],
+  ['active_zone_minutes', 'ALTER TABLE exercise_sessions ADD COLUMN active_zone_minutes INTEGER'],
+  ['vo2_max', 'ALTER TABLE exercise_sessions ADD COLUMN vo2_max REAL'],
+  ['hr_zone_light_s', 'ALTER TABLE exercise_sessions ADD COLUMN hr_zone_light_s REAL'],
+  ['hr_zone_moderate_s', 'ALTER TABLE exercise_sessions ADD COLUMN hr_zone_moderate_s REAL'],
+  ['hr_zone_vigorous_s', 'ALTER TABLE exercise_sessions ADD COLUMN hr_zone_vigorous_s REAL'],
+  ['hr_zone_peak_s', 'ALTER TABLE exercise_sessions ADD COLUMN hr_zone_peak_s REAL'],
+] as const) {
+  if (!exerciseSessionColumns.has(column)) db.exec(ddl);
+}
 
 export interface DailyPoint {
   date: string; // YYYY-MM-DD
@@ -162,25 +197,57 @@ export function normalizeSleep(points: SleepDataPoint[]): SleepNight[] {
     .reverse();
 }
 
+function parseDurationSeconds(dur?: string): number | null {
+  if (!dur) return null;
+  const match = dur.match(/^(-?\d+(?:\.\d+)?)s$/);
+  return match ? Number(match[1]) : null;
+}
+
 export interface ExerciseSession {
   sourceId: string;
   startTime: string;
   endTime: string;
   exerciseType: string;
+  displayName: string | null;
+  notes: string | null;
   caloriesKcal: number | null;
   distanceMm: number | null;
   avgHeartRate: number | null;
+  steps: number | null;
+  avgSpeedMmPerS: number | null;
+  avgPaceSPerM: number | null;
+  elevationGainMm: number | null;
+  activeZoneMinutes: number | null;
+  vo2Max: number | null;
+  hrZoneSeconds: { light: number | null; moderate: number | null; vigorous: number | null; peak: number | null };
 }
 
 const upsertExerciseStmt = db.prepare(
-  `INSERT INTO exercise_sessions (user_id, source_id, start_time, end_time, exercise_type, calories_kcal, distance_mm, avg_heart_rate, updated_at)
-   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `INSERT INTO exercise_sessions (
+     user_id, source_id, start_time, end_time, exercise_type, display_name, notes,
+     calories_kcal, distance_mm, avg_heart_rate, steps, avg_speed_mm_per_s, avg_pace_s_per_m,
+     elevation_gain_mm, active_zone_minutes, vo2_max,
+     hr_zone_light_s, hr_zone_moderate_s, hr_zone_vigorous_s, hr_zone_peak_s, updated_at
+   )
+   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
    ON CONFLICT(user_id, source_id) DO UPDATE SET
      end_time = excluded.end_time,
      exercise_type = excluded.exercise_type,
+     display_name = excluded.display_name,
+     notes = excluded.notes,
      calories_kcal = excluded.calories_kcal,
      distance_mm = excluded.distance_mm,
      avg_heart_rate = excluded.avg_heart_rate,
+     steps = excluded.steps,
+     avg_speed_mm_per_s = excluded.avg_speed_mm_per_s,
+     avg_pace_s_per_m = excluded.avg_pace_s_per_m,
+     elevation_gain_mm = excluded.elevation_gain_mm,
+     active_zone_minutes = excluded.active_zone_minutes,
+     vo2_max = excluded.vo2_max,
+     hr_zone_light_s = excluded.hr_zone_light_s,
+     hr_zone_moderate_s = excluded.hr_zone_moderate_s,
+     hr_zone_vigorous_s = excluded.hr_zone_vigorous_s,
+     hr_zone_peak_s = excluded.hr_zone_peak_s,
      updated_at = excluded.updated_at`
 );
 
@@ -194,26 +261,55 @@ export function upsertExerciseSessions(userId: string, points: ExerciseDataPoint
     if (!sourceId || !start || !end) continue;
     const summary = p.exercise?.metricsSummary;
     const avgHr = summary?.averageHeartRateBeatsPerMinute ? Number(summary.averageHeartRateBeatsPerMinute) : null;
+    const zones = summary?.heartRateZoneDurations;
+    const hrZoneSeconds = {
+      light: parseDurationSeconds(zones?.lightTime),
+      moderate: parseDurationSeconds(zones?.moderateTime),
+      vigorous: parseDurationSeconds(zones?.vigorousTime),
+      peak: parseDurationSeconds(zones?.peakTime),
+    };
+    const session: ExerciseSession = {
+      sourceId,
+      startTime: start,
+      endTime: end,
+      exerciseType: p.exercise?.exerciseType ?? 'OTHER',
+      displayName: p.exercise?.displayName ?? null,
+      notes: p.exercise?.notes ?? null,
+      caloriesKcal: summary?.caloriesKcal ?? null,
+      distanceMm: summary?.distanceMillimeters ?? null,
+      avgHeartRate: avgHr,
+      steps: summary?.steps ? Number(summary.steps) : null,
+      avgSpeedMmPerS: summary?.averageSpeedMillimetersPerSecond ?? null,
+      avgPaceSPerM: summary?.averagePaceSecondsPerMeter ?? null,
+      elevationGainMm: summary?.elevationGainMillimeters ?? null,
+      activeZoneMinutes: summary?.activeZoneMinutes ? Number(summary.activeZoneMinutes) : null,
+      vo2Max: summary?.runVo2Max ?? null,
+      hrZoneSeconds,
+    };
     upsertExerciseStmt.run(
       userId,
       sourceId,
       new Date(start).getTime(),
       new Date(end).getTime(),
-      p.exercise?.exerciseType ?? 'OTHER',
-      summary?.caloriesKcal ?? null,
-      summary?.distanceMillimeters ?? null,
-      avgHr,
+      session.exerciseType,
+      session.displayName,
+      session.notes,
+      session.caloriesKcal,
+      session.distanceMm,
+      session.avgHeartRate,
+      session.steps,
+      session.avgSpeedMmPerS,
+      session.avgPaceSPerM,
+      session.elevationGainMm,
+      session.activeZoneMinutes,
+      session.vo2Max,
+      hrZoneSeconds.light,
+      hrZoneSeconds.moderate,
+      hrZoneSeconds.vigorous,
+      hrZoneSeconds.peak,
       now
     );
-    results.push({
-      sourceId,
-      startTime: start,
-      endTime: end,
-      exerciseType: p.exercise?.exerciseType ?? 'OTHER',
-      caloriesKcal: summary?.caloriesKcal ?? null,
-      distanceMm: summary?.distanceMillimeters ?? null,
-      avgHeartRate: avgHr,
-    });
+    results.push(session);
   }
   return results;
 }

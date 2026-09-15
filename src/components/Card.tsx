@@ -45,3 +45,12 @@ export function EmptyCard({ title }: { title: string }) {
     </Card>
   );
 }
+
+export function UnavailableCard({ title, reason }: { title: string; reason: string }) {
+  return (
+    <Card title={title}>
+      <p className="text-gray-500 text-sm">Not available in this build</p>
+      <p className="text-gray-600 text-xs mt-1">{reason}</p>
+    </Card>
+  );
+}

@@ -1,48 +1,36 @@
-import { healthFetch } from './client';
-
 export interface HeartRateSample {
   time: string;
   bpm: number;
 }
 
-interface HrListResponse {
-  dataPoints: Array<{ heartRate?: { sampleTime?: { physicalTime?: string }; beatsPerMinute?: string } }>;
-  nextPageToken?: string;
+export interface HeartRateZones {
+  light: number | null;
+  moderate: number | null;
+  vigorous: number | null;
+  peak: number | null;
 }
 
-export async function getDailyHeartRate(
-  accessToken: string,
-  date: Date = new Date()
-): Promise<HeartRateSample[]> {
+// Backend-served intraday heart rate (plan milestone M6) — session-authenticated,
+// no access token needed here.
+export async function getDailyHeartRateFromBackend(date: Date = new Date()): Promise<HeartRateSample[]> {
   const dateStr = date.toISOString().split('T')[0];
-  const nextDay = new Date(date);
-  nextDay.setDate(nextDay.getDate() + 1);
-  const nextDateStr = nextDay.toISOString().split('T')[0];
+  const res = await fetch(`/api/metrics/heart-rate?date=${dateStr}`, { credentials: 'same-origin' });
+  if (!res.ok) throw new Error(`Heart rate fetch failed (${res.status})`);
+  const data = (await res.json()) as { samples: HeartRateSample[] };
+  return data.samples;
+}
 
-  const filter = `heart_rate.sample_time.physical_time >= "${dateStr}T00:00:00Z" AND heart_rate.sample_time.physical_time < "${nextDateStr}T00:00:00Z"`;
-  const allSamples: HeartRateSample[] = [];
-  let pageToken: string | undefined;
+export async function getHeartRateRangeFromBackend(startIso: string, endIso: string): Promise<HeartRateSample[]> {
+  const params = new URLSearchParams({ start: startIso, end: endIso });
+  const res = await fetch(`/api/metrics/heart-rate?${params}`, { credentials: 'same-origin' });
+  if (!res.ok) throw new Error(`Heart rate fetch failed (${res.status})`);
+  const data = (await res.json()) as { samples: HeartRateSample[] };
+  return data.samples;
+}
 
-  do {
-    const params = new URLSearchParams({ filter, page_size: '10000' });
-    if (pageToken) params.set('page_token', pageToken);
-
-    const data = await healthFetch<HrListResponse>(
-      `/users/me/dataTypes/heart-rate/dataPoints?${params}`,
-      accessToken
-    );
-
-    for (const d of data.dataPoints || []) {
-      if (d.heartRate?.sampleTime?.physicalTime && d.heartRate?.beatsPerMinute) {
-        allSamples.push({
-          time: d.heartRate.sampleTime.physicalTime,
-          bpm: parseInt(d.heartRate.beatsPerMinute, 10),
-        });
-      }
-    }
-
-    pageToken = data.nextPageToken;
-  } while (pageToken);
-
-  return allSamples.sort((a, b) => a.time.localeCompare(b.time));
+export async function getHeartRateZonesFromBackend(daysBack: number = 7): Promise<HeartRateZones> {
+  const res = await fetch(`/api/metrics/heart-rate-zones?days=${daysBack}`, { credentials: 'same-origin' });
+  if (!res.ok) throw new Error(`Heart rate zones fetch failed (${res.status})`);
+  const data = (await res.json()) as { zones: HeartRateZones };
+  return data.zones;
 }

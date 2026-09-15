@@ -17,6 +17,7 @@ db.exec(`
     health_user_id TEXT NOT NULL UNIQUE,
     legacy_user_id TEXT,
     email TEXT,
+    display_name TEXT,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   );
@@ -45,6 +46,13 @@ db.exec(`
     expires_at INTEGER NOT NULL
   );
 `);
+
+// display_name was added after the initial users table shipped (plan
+// milestone M6) — upgrade existing dev databases in place.
+const userColumns = new Set((db.prepare(`PRAGMA table_info(users)`).all() as Array<{ name: string }>).map((c) => c.name));
+if (!userColumns.has('display_name')) {
+  db.exec('ALTER TABLE users ADD COLUMN display_name TEXT');
+}
 
 export function pruneExpired(): void {
   const now = Date.now();

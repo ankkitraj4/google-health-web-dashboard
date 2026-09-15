@@ -47,12 +47,14 @@ Two facts from actually reading the fork's source (via the GitHub API) shape the
 - **Verified with a real consent grant**, not just code review: after logging in for real, `localStorage`/`sessionStorage` held no tokens (only UI layout prefs), `document.cookie` was empty (httpOnly working as intended), the network log showed zero requests to `googleapis.com`/`accounts.google.com`, and the SQLite `users`/`sessions`/`oauth_tokens` rows showed the same `healthUserId` from M2 with the refresh token stored in encrypted (non-plaintext) form.
 - **Known, expected gap:** the metric cards (Sleep, Cardio, etc.) now spin forever, since they still expect a real `accessToken` from `useAuth()` (now always `null`) to call Google directly. That's intentional — M4 wires the first real backend-served metric, M5 the rest, M6 finishes the frontend cutover.
 
-### M4 — One real metric, end to end
+### M4 — One real metric, end to end ✅ done 2026-09-15
 **Goal:** Prove the full path — backend calls Google Health, normalizes, stores, serves — works for a single metric before building five more.
 - Build the adapter for **steps only**, porting the request shape from `src/api/activity.ts`'s `getStepsDaily`.
 - Store normalized rows (user, metric, value, unit, start/end timestamp, source, sync metadata) in SQLite.
 - Expose a backend endpoint the frontend calls for steps.
 - **Test:** the number the dashboard shows for "today's steps" matches the number you got by hand in M2's raw API call (or a fresh equivalent call), for the same day. This is the milestone where you find out if your data-type name and rollup window assumptions were right — fix them here, not in M5.
+
+**Verified with a real login, not just code review:** the dashboard's Activity card showed 6,684 steps today, and the SQLite `metrics` table's historical rows (9/11–9/14: 298, 5821, 8627, 5690) matched M2's raw API findings exactly. Reloading the page re-fetched and re-upserted without adding rows — today's value updated in place (6684→6731 as real steps accrued between the two fetches) and the table stayed at 5 rows throughout, confirming the idempotent-upsert design works, not just compiles. `ActivityCard` now fetches only steps through the backend; its calorie stat shows "coming soon" rather than being left silently broken, since calories still needs the same treatment in M5.
 
 ### M5 — Remaining core metrics, with dedup proven
 **Goal:** Sleep, heart rate/resting heart rate, exercise, calories, distance, and active minutes all flow through the same adapter pattern, and syncing twice doesn't duplicate data.

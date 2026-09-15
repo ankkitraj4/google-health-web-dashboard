@@ -33,12 +33,19 @@ Two facts from actually reading the fork's source (via the GitHub API) shape the
 - `googlehealth.settings.readonly` (needed for `pairedDevices`) was left out of the working scope set — add and test it separately in M4/M5 if device-provenance data is wanted.
 - Confirmed against a real Google Fitbit Air: `dataTypes/steps/dataPoints:dailyRollUp` and `dataTypes/sleep/dataPoints` match the fork's `activity.ts`/`sleep.ts` shapes exactly — `steps.countSum` as a numeric string, sleep responses include full `STAGES` breakdown (AWAKE/LIGHT/DEEP/REM) with a `summary` block, and `dataSource.device.displayName: "Google Fitbit Air"` / `platform: "FITBIT"` confirm real device provenance. Timestamps carry explicit UTC offsets (e.g. `"7200s"`) — build M5's timezone handling off the offset field, not an assumed local zone.
 
-### M3 — Backend owns auth; browser never sees a token
+### M3 — Backend owns auth; browser never sees a token ✅ done 2026-09-15
 **Goal:** A minimal backend that completes Google OAuth server-side and gives the browser only a session cookie — no health data yet.
 - Add a backend workspace (TypeScript + a small HTTP framework, SQLite for dev).
 - Implement the authorization-code flow with PKCE/state validation, callback handling, encrypted-at-rest refresh-token storage, and a session cookie.
 - Point the frontend's login button at this backend instead of `google-oauth.ts`'s direct browser flow; delete `VITE_GOOGLE_CLIENT_SECRET` usage and the `sessionStorage` token writes.
 - **Test:** open browser devtools → Application → Storage during and after login. `sessionStorage`/`localStorage` contain no access or refresh token. The Network tab shows zero requests from the browser to `googleapis.com` or `accounts.google.com` for tokens — only to your own backend. `/session` (or equivalent) returns "logged in" state from the cookie alone.
+
+**How it was built and verified:**
+- New `server/` workspace: Express + TypeScript + the built-in `node:sqlite` (no native module build needed). PKCE/state stored server-side with a 10-minute TTL; refresh tokens encrypted at rest with AES-256-GCM (`TOKEN_ENCRYPTION_KEY`); access tokens cached with expiry and refreshed transparently. Session is an opaque random id in an httpOnly, `sameSite=lax` cookie mapping to a `sessions` row — never a JWT or anything carrying token material.
+- `vite.config.ts` proxies `/auth`, `/callback`, `/api` to the backend so the browser only ever talks to its own origin in dev, and `/callback` keeps matching the redirect URI already registered in Google Cloud Console (no console changes needed).
+- Deleted `src/auth/google-oauth.ts` and `pkce.ts` outright — they were the files embedding the client secret in the browser bundle (the M0 finding).
+- **Verified with a real consent grant**, not just code review: after logging in for real, `localStorage`/`sessionStorage` held no tokens (only UI layout prefs), `document.cookie` was empty (httpOnly working as intended), the network log showed zero requests to `googleapis.com`/`accounts.google.com`, and the SQLite `users`/`sessions`/`oauth_tokens` rows showed the same `healthUserId` from M2 with the refresh token stored in encrypted (non-plaintext) form.
+- **Known, expected gap:** the metric cards (Sleep, Cardio, etc.) now spin forever, since they still expect a real `accessToken` from `useAuth()` (now always `null`) to call Google directly. That's intentional — M4 wires the first real backend-served metric, M5 the rest, M6 finishes the frontend cutover.
 
 ### M4 — One real metric, end to end
 **Goal:** Prove the full path — backend calls Google Health, normalizes, stores, serves — works for a single metric before building five more.

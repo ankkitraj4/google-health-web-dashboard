@@ -96,11 +96,22 @@ Two facts from actually reading the fork's source (via the GitHub API) shape the
 - **Stale**: same fetch-intercept technique, returning an old `latestDate` — confirmed the amber "Data may be stale" note renders. (Directly faking DB timestamps doesn't work for this one: the architecture always live-syncs from Google on card load, so a stale DB row gets silently overwritten by the next real fetch before you can see it — the intercept sidesteps that without needing an actually-stale device.)
 - **A real gap found while verifying, not before it**: stopping the backend didn't show any error at all — `/api/session` failed, and `AuthContext` silently treated that as "not authenticated," showing the ordinary login screen with no hint anything was wrong. Fixed by adding a distinct `sessionCheckFailed` state and a "Can't reach the server" screen with Retry, then reverified live (kill backend → distinct screen appears; restart backend → Retry recovers).
 
-### M8 — Backfill and webhook sync
+### M8 — Backfill and webhook sync ✅ done 2026-09-15
 **Goal:** Historical data loads without breaking the hot-sync dedup, and Google's push notifications trigger a scoped refetch instead of a blind reprocess.
 - Add a queued/backfill job for history beyond the hot-sync window, chunked and retried with backoff on 429/504.
-- Add the webhook endpoint (Google Health webhooks are notify-only: a notification says what changed, you fetch it over REST) with signature validation, enqueueing a targeted refresh.
+- Add the webhook endpoint (Google Health webhooks are notify-only: a notification says what changed and when, you fetch it over REST) with signature validation, enqueueing a targeted refresh.
 - **Test:** trigger a backfill for a 60+ day range and confirm row counts match a manual spot-check for a few known days, with no duplicates against the M5 hot-sync data. Simulate a webhook call (a local `curl POST` with a valid signature) and confirm it enqueues exactly the metric/date range named in the payload, not a full resync.
+
+**Scoping decision:** "queued" job and webhook "enqueueing" both mean a synchronous, chunked/retried function call, not a separate worker process — this is a single-user local app, so a real job queue would be pure overhead for what a bounded retry loop already provides.
+
+**A real API constraint found live, not in docs:** a 90-day backfill request for `active-minutes` failed with a genuine 400 `INVALID_ROLLUP_QUERY_DURATION` — Google caps that data type's `dailyRollUp` window at 14 days, tighter than the 30-day chunk size this started with (`steps` had accepted the wider window in the same run). Fixed by using 14 days for every metric's chunk size rather than adding a per-metric limits table that would just be one more place to silently drift from Google's actual limits.
+
+**Webhook signature verification is real**, not stubbed: it fetches and parses Google's actual published Tink/ECDSA-P256 public keyset (`gstatic.com/googlehealthapi/webhooks/...`) and verifies against it with Node's built-in `crypto`, plus the documented Authorization-header shared secret as a first layer.
+
+**Verified with real data, not just unit tests:**
+- **Backfill**: a real 90-day run against the live API succeeded for all six metrics after the chunk-size fix. Running it twice left every row count identical — idempotent against both the M5 hot-sync data and itself.
+- **Signature scheme**: round-tripped with a synthetic P-256 keypair using the exact Tink-prefix + DER-ECDSA construction, and separately confirmed the real protobuf parser correctly decodes all 5 keys in Google's actual live keyset.
+- **Full webhook pipeline**: rejection paths confirmed for real (missing auth header, wrong token, missing signature, garbage signature — all 401, no key ever needed for these). The accept path — which only Google's private key can normally produce a valid signature for — was verified by temporarily pointing the keyset loader at a local synthetic keyset server; a validly-signed notification for the real logged-in user's real `healthUserId` returned 204 and the backend log confirmed an actual scoped Google Health API refetch happened, with no duplicate rows created. Unknown-`healthUserId` and unmapped-`dataType` notifications both returned 204 without erroring, logged as explicit no-ops. The temporary override was reverted and grepped-for before committing.
 
 ### M9 — Privacy, ops hardening, and final real-world validation
 **Goal:** Nothing sensitive is in git or logs, disconnect actually removes data, and the whole flow works against your real Fitbit Air.

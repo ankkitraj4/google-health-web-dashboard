@@ -5,16 +5,24 @@ import { attachSession } from './session.js';
 import { authRouter } from './routes/auth.js';
 import { sessionRouter } from './routes/session.js';
 import { metricsRouter } from './routes/metrics.js';
+import { backfillRouter } from './routes/backfill.js';
+import { webhookRouter } from './routes/webhook.js';
 import { pruneExpired } from './db.js';
 
 const app = express();
-app.use(express.json());
+// Captures the exact raw request bytes alongside the parsed body — the
+// webhook route (M8) needs them verbatim to verify Google's signature,
+// which is computed over the raw JSON, not over our parsed-and-reserialized
+// version of it (whitespace/key-order could differ).
+app.use(express.json({ verify: (req, _res, buf) => { (req as express.Request & { rawBody?: Buffer }).rawBody = Buffer.from(buf); } }));
 app.use(cookieParser());
 app.use(attachSession);
 
 app.use(authRouter);
 app.use(sessionRouter);
 app.use(metricsRouter);
+app.use(backfillRouter);
+app.use(webhookRouter);
 
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true });

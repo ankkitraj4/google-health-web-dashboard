@@ -40,6 +40,14 @@ export function upsertUserByHealthId(
   return id;
 }
 
+// Used by the webhook handler (M8) to map a notification's healthUserId
+// back to our internal user id.
+export function getUserByHealthId(healthUserId: string): User | undefined {
+  return db.prepare('SELECT id, health_user_id, legacy_user_id, email, display_name FROM users WHERE health_user_id = ?').get(
+    healthUserId
+  ) as User | undefined;
+}
+
 export function getUser(userId: string): User | undefined {
   return db.prepare('SELECT id, health_user_id, legacy_user_id, email, display_name FROM users WHERE id = ?').get(
     userId

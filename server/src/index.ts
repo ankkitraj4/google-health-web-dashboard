@@ -4,6 +4,7 @@ import cookieParser from 'cookie-parser';
 import { attachSession } from './session.js';
 import { authRouter } from './routes/auth.js';
 import { sessionRouter } from './routes/session.js';
+import { metricsRouter } from './routes/metrics.js';
 import { pruneExpired } from './db.js';
 
 const app = express();
@@ -13,6 +14,7 @@ app.use(attachSession);
 
 app.use(authRouter);
 app.use(sessionRouter);
+app.use(metricsRouter);
 
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true });

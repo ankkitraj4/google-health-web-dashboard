@@ -21,6 +21,24 @@ function getDailyRollUpBody(daysBack: number) {
   };
 }
 
+export interface BackendDailyPoint {
+  date: string; // YYYY-MM-DD
+  value: number;
+}
+
+// Backend-served steps (plan milestone M4) — calls our own session-authenticated
+// endpoint instead of Google directly, so no access token is needed here.
+export async function getStepsDailyFromBackend(daysBack: number = 7): Promise<BackendDailyPoint[]> {
+  const res = await fetch(`/api/metrics/steps?days=${daysBack}`, { credentials: 'same-origin' });
+  if (!res.ok) {
+    throw new Error(`Steps fetch failed (${res.status})`);
+  }
+  const data = (await res.json()) as { points: BackendDailyPoint[] };
+  return data.points;
+}
+
+// Legacy direct-to-Google path — still used by getCaloriesDaily/
+// getActiveCaloriesDaily until they're wired through the backend in M5.
 export async function getStepsDaily(
   accessToken: string,
   daysBack: number = 7

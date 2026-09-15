@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, Cell } from 'recharts';
 import { useAuth } from '../auth/AuthContext';
-import { getStepsDaily, getCaloriesDaily } from '../api/activity';
-import type { StepsRollupDataPoint, CaloriesRollupDataPoint } from '../types/health';
+import { getStepsDailyFromBackend } from '../api/activity';
 import { Card, LoadingCard, ErrorCard, EmptyCard } from './Card';
 import { useDateRange } from '../context/DateRangeContext';
 
@@ -19,18 +18,6 @@ interface StepsGoals {
 const GOALS_KEY = 'steps_goals';
 const DEFAULT_GOALS: StepsGoals = { daily: 10000, weekly: 70000 };
 
-function kcalValue(value: unknown): number {
-  if (typeof value === 'number') return value;
-  if (typeof value === 'string') return Number(value) || 0;
-  if (value && typeof value === 'object') {
-    const parsedValue = (value as { parsedValue?: unknown }).parsedValue;
-    if (typeof parsedValue === 'number') return parsedValue;
-    const source = (value as { source?: unknown }).source;
-    if (typeof source === 'string') return Number(source) || 0;
-  }
-  return 0;
-}
-
 function loadGoals(): StepsGoals {
   try {
     const stored = localStorage.getItem(GOALS_KEY);
@@ -46,38 +33,31 @@ function saveGoals(goals: StepsGoals) {
 }
 
 export function ActivityCard() {
-  const { accessToken } = useAuth();
+  const { isAuthenticated } = useAuth();
   const { daysBack } = useDateRange();
   const [stepsData, setStepsData] = useState<DayData[]>([]);
-  const [totalCalories, setTotalCalories] = useState(0);
+  // Calories still needs to move through the backend (plan milestone M5) —
+  // it's not wired up in M4's narrower "one real metric" scope, so it's
+  // shown as unavailable rather than fetched with a token we no longer have.
   const [goals, setGoals] = useState<StepsGoals>(loadGoals);
   const [editing, setEditing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!accessToken) return;
+    if (!isAuthenticated) return;
 
-    Promise.all([getStepsDaily(accessToken, daysBack), getCaloriesDaily(accessToken, daysBack)])
-      .then(([steps, calories]) => {
-        const mapped = steps.map((s: StepsRollupDataPoint) => {
-          const d = s.civilStartTime?.date;
-          return {
-            date: d ? `${d.month}/${d.day}` : '?',
-            steps: parseInt(s.steps.countSum) || 0,
-          };
+    getStepsDailyFromBackend(daysBack)
+      .then((points) => {
+        const mapped = points.map((p) => {
+          const [, month, day] = p.date.split('-');
+          return { date: `${Number(month)}/${Number(day)}`, steps: p.value };
         });
-        setStepsData(mapped.reverse());
-
-        const calTotal = calories.reduce(
-          (sum: number, c: CaloriesRollupDataPoint) => sum + (kcalValue(c.totalCalories?.kcalSum) || kcalValue(c.activeEnergyBurned?.kcalSum)),
-          0
-        );
-        setTotalCalories(Math.round(calTotal));
+        setStepsData(mapped);
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
-  }, [accessToken, daysBack]);
+  }, [isAuthenticated, daysBack]);
 
   function updateGoal(key: keyof StepsGoals, value: number) {
     const updated = { ...goals, [key]: value };
@@ -110,8 +90,8 @@ export function ActivityCard() {
             <p className="text-sm text-gray-400">steps today</p>
           </div>
           <div>
-            <p className="text-3xl font-bold">{totalCalories.toLocaleString()}</p>
-            <p className="text-sm text-gray-400">kcal burned (7d)</p>
+            <p className="text-3xl font-bold text-gray-600">—</p>
+            <p className="text-sm text-gray-400">kcal burned (coming soon)</p>
           </div>
           <div>
             <p className="text-3xl font-bold">{daysHit}<span className="text-sm font-normal text-gray-400">/{weekDays} days</span></p>

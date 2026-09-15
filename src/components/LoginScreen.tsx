@@ -1,5 +1,3 @@
-import { initiateLogin } from '../auth/google-oauth';
-
 export function LoginScreen({ error }: { error: string | null }) {
   return (
     <div className="min-h-screen bg-gray-950 flex items-center justify-center">
@@ -16,7 +14,7 @@ export function LoginScreen({ error }: { error: string | null }) {
         )}
 
         <button
-          onClick={() => initiateLogin()}
+          onClick={() => { window.location.href = '/auth/login'; }}
           className="inline-flex items-center gap-3 bg-white text-gray-900 font-medium px-6 py-3 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer"
         >
           <svg className="w-5 h-5" viewBox="0 0 24 24">

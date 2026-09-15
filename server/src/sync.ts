@@ -30,7 +30,10 @@ const CHUNK_DAYS = 14;
 // Splits [0, totalDays] into non-overlapping CHUNK_DAYS-wide windows. Most
 // recent chunk first so a backfill that fails partway through has already
 // captured the most useful (recent) history.
-function chunkRanges(totalDays: number): DayRange[] {
+// Exported for direct unit testing (test/sync.test.ts) — the chunking math
+// is exactly the kind of off-by-one-prone logic worth testing in isolation
+// rather than only through a full (slow, network-dependent) backfill run.
+export function chunkRanges(totalDays: number): DayRange[] {
   const ranges: DayRange[] = [];
   for (let end = 0; end < totalDays; end += CHUNK_DAYS) {
     ranges.push({ startDaysBack: Math.min(end + CHUNK_DAYS, totalDays), endDaysBack: end });

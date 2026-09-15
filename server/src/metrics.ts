@@ -81,6 +81,14 @@ export interface DailyPoint {
   value: number;
 }
 
+// Points are oldest-first (see upsertDaily below), so the last one is the
+// most recent day with real data — the freshness signal the frontend uses
+// to flag a metric as stale (plan milestone M7), independent of whether the
+// fetch itself just succeeded.
+export function latestDate(points: DailyPoint[]): string | null {
+  return points.length ? points[points.length - 1].date : null;
+}
+
 function isoDate(d: { year: number; month: number; day: number }): string {
   return `${d.year}-${String(d.month).padStart(2, '0')}-${String(d.day).padStart(2, '0')}`;
 }

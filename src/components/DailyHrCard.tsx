@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceArea, ReferenceLine } from 'recharts';
 import { useAuth } from '../auth/AuthContext';
 import { getDailyHeartRateFromBackend, getHeartRateZonesFromBackend, type HeartRateSample, type HeartRateZones } from '../api/heart-rate';
-import { Card, LoadingCard, ErrorCard, EmptyCard } from './Card';
+import { Card, LoadingCard, EmptyCard, renderFetchError } from './Card';
 
 interface ZoneThresholds {
   light: number;
@@ -31,7 +31,7 @@ export function DailyHrCard() {
   const [samples, setSamples] = useState<HeartRateSample[]>([]);
   const [zones, setZones] = useState<ZoneThresholds>(DEFAULT_ZONES);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [selectedDay, setSelectedDay] = useState<Date>(new Date());
 
   useEffect(() => {
@@ -49,7 +49,7 @@ export function DailyHrCard() {
         const parsed = parseZones(zoneData);
         if (parsed) setZones(parsed);
       })
-      .catch((err) => setError(err.message))
+      .catch((err) => setError(err))
       .finally(() => setLoading(false));
   }, [isAuthenticated, selectedDay]);
 
@@ -69,7 +69,7 @@ export function DailyHrCard() {
   const dateLabel = isToday ? 'Today' : selectedDay.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
 
   if (loading) return <LoadingCard title="Heart Rate" />;
-  if (error) return <ErrorCard title="Heart Rate" error={error} />;
+  if (error) return renderFetchError('Heart Rate', error);
   if (samples.length === 0) return <EmptyCard title="Heart Rate" />;
 
   const data: ChartPoint[] = samples.map((s) => {

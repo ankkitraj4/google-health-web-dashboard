@@ -1,3 +1,5 @@
+import { backendFetch } from './backendFetch';
+
 export interface ExerciseSession {
   sourceId: string;
   startTime: string;
@@ -20,9 +22,7 @@ export interface ExerciseSession {
 // Backend-served exercise sessions (plan milestone M6) — session-authenticated,
 // no access token needed here.
 export async function getExercisesFromBackend(daysBack: number = 60): Promise<ExerciseSession[]> {
-  const res = await fetch(`/api/exercise?days=${daysBack}`, { credentials: 'same-origin' });
-  if (!res.ok) throw new Error(`Exercise fetch failed (${res.status})`);
-  const data = (await res.json()) as { sessions: ExerciseSession[] };
+  const data = await backendFetch<{ sessions: ExerciseSession[] }>(`/api/exercise?days=${daysBack}`);
   return data.sessions;
 }
 

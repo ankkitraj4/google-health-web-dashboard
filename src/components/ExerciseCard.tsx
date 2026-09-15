@@ -6,7 +6,7 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceA
 import { useAuth } from '../auth/AuthContext';
 import { getExercisesFromBackend, exerciseLabel, type ExerciseSession } from '../api/exercise';
 import { getHeartRateRangeFromBackend, getHeartRateZonesFromBackend, type HeartRateSample } from '../api/heart-rate';
-import { Card, LoadingCard, ErrorCard } from './Card';
+import { Card, LoadingCard, renderFetchError } from './Card';
 
 function formatDuration(startTime: string, endTime: string): string {
   const totalSecs = Math.round((new Date(endTime).getTime() - new Date(startTime).getTime()) / 1000);
@@ -272,7 +272,7 @@ export function ExerciseCard() {
   const { isAuthenticated } = useAuth();
   const [exercises, setExercises] = useState<ExerciseSession[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [selectedDate, setSelectedDate] = useState<Date | undefined>();
   const [month, setMonth] = useState(new Date());
   const [modalExercise, setModalExercise] = useState<ExerciseSession | null>(null);
@@ -281,7 +281,7 @@ export function ExerciseCard() {
     if (!isAuthenticated) return;
     getExercisesFromBackend()
       .then(setExercises)
-      .catch((err) => setError(err.message))
+      .catch((err) => setError(err))
       .finally(() => setLoading(false));
   }, [isAuthenticated]);
 
@@ -332,7 +332,7 @@ export function ExerciseCard() {
   }, []);
 
   if (loading) return <LoadingCard title="Exercises" />;
-  if (error) return <ErrorCard title="Exercises" error={error} />;
+  if (error) return renderFetchError('Exercises', error);
 
   return (
     <>

@@ -1,6 +1,7 @@
-import { Router } from 'express';
+import { Router, type Response } from 'express';
 import type { AuthedRequest } from '../session.js';
 import { getValidAccessToken } from '../oauth.js';
+import { GoogleHealthApiError } from '../errors.js';
 import {
   fetchStepsDailyRollup,
   fetchActiveMinutesDailyRollup,
@@ -18,11 +19,12 @@ import {
   upsertRestingHr,
   normalizeSleep,
   upsertExerciseSessions,
+  latestDate,
 } from '../metrics.js';
 
 export const metricsRouter = Router();
 
-function requireAuth(req: AuthedRequest, res: import('express').Response): req is AuthedRequest & { userId: string } {
+function requireAuth(req: AuthedRequest, res: Response): req is AuthedRequest & { userId: string } {
   if (!req.userId) {
     res.status(401).json({ error: 'not_authenticated' });
     return false;
@@ -34,15 +36,32 @@ function daysParam(req: AuthedRequest): number {
   return Math.min(Math.max(Number(req.query.days) || 7, 1), 30);
 }
 
+// Central place that turns a caught error into the response shape the
+// frontend's backendFetch/renderFetchError expect (plan milestone M7):
+// a specific {error: <code>} body with a matching HTTP status, not a
+// one-size-fits-all 502. Falls back to upstream_error for anything
+// unclassified (a real bug, a network blip, etc.) rather than pretending
+// to know what happened.
+function respondError(res: Response, label: string, err: unknown): void {
+  if (err instanceof GoogleHealthApiError) {
+    console.error(`[metrics] ${label} failed: ${err.code} - ${err.message}`);
+    const body: Record<string, unknown> = { error: err.code };
+    if (err.retryAfterSeconds) body.retryAfterSeconds = err.retryAfterSeconds;
+    res.status(err.status).json(body);
+    return;
+  }
+  console.error(`[metrics] ${label} failed:`, err instanceof Error ? err.message : err);
+  res.status(502).json({ error: 'upstream_error' });
+}
+
 metricsRouter.get('/api/metrics/steps', async (req: AuthedRequest, res) => {
   if (!requireAuth(req, res)) return;
   try {
     const accessToken = await getValidAccessToken(req.userId);
     const points = upsertStepsRollup(req.userId, await fetchStepsDailyRollup(accessToken, daysParam(req)));
-    res.json({ points });
+    res.json({ points, latestDate: latestDate(points) });
   } catch (err) {
-    console.error('[metrics] steps fetch failed:', err instanceof Error ? err.message : err);
-    res.status(502).json({ error: 'upstream_fetch_failed' });
+    respondError(res, 'steps', err);
   }
 });
 
@@ -51,10 +70,9 @@ metricsRouter.get('/api/metrics/active-minutes', async (req: AuthedRequest, res)
   try {
     const accessToken = await getValidAccessToken(req.userId);
     const points = upsertActiveMinutesRollup(req.userId, await fetchActiveMinutesDailyRollup(accessToken, daysParam(req)));
-    res.json({ points });
+    res.json({ points, latestDate: latestDate(points) });
   } catch (err) {
-    console.error('[metrics] active-minutes fetch failed:', err instanceof Error ? err.message : err);
-    res.status(502).json({ error: 'upstream_fetch_failed' });
+    respondError(res, 'active-minutes', err);
   }
 });
 
@@ -63,10 +81,9 @@ metricsRouter.get('/api/metrics/calories', async (req: AuthedRequest, res) => {
   try {
     const accessToken = await getValidAccessToken(req.userId);
     const points = upsertCaloriesRollup(req.userId, await fetchCaloriesDailyRollup(accessToken, daysParam(req)));
-    res.json({ points });
+    res.json({ points, latestDate: latestDate(points) });
   } catch (err) {
-    console.error('[metrics] calories fetch failed:', err instanceof Error ? err.message : err);
-    res.status(502).json({ error: 'upstream_fetch_failed' });
+    respondError(res, 'calories', err);
   }
 });
 
@@ -75,10 +92,9 @@ metricsRouter.get('/api/metrics/resting-heart-rate', async (req: AuthedRequest, 
   try {
     const accessToken = await getValidAccessToken(req.userId);
     const points = upsertRestingHr(req.userId, await fetchRestingHrList(accessToken, daysParam(req)));
-    res.json({ points });
+    res.json({ points, latestDate: latestDate(points) });
   } catch (err) {
-    console.error('[metrics] resting-heart-rate fetch failed:', err instanceof Error ? err.message : err);
-    res.status(502).json({ error: 'upstream_fetch_failed' });
+    respondError(res, 'resting-heart-rate', err);
   }
 });
 
@@ -87,10 +103,9 @@ metricsRouter.get('/api/metrics/sleep', async (req: AuthedRequest, res) => {
   try {
     const accessToken = await getValidAccessToken(req.userId);
     const nights = normalizeSleep(await fetchSleepList(accessToken, daysParam(req)));
-    res.json({ nights });
+    res.json({ nights, latestDate: nights.length ? nights[nights.length - 1].date : null });
   } catch (err) {
-    console.error('[metrics] sleep fetch failed:', err instanceof Error ? err.message : err);
-    res.status(502).json({ error: 'upstream_fetch_failed' });
+    respondError(res, 'sleep', err);
   }
 });
 
@@ -123,8 +138,7 @@ metricsRouter.get('/api/metrics/heart-rate', async (req: AuthedRequest, res) => 
     const samples = await fetchHeartRateSamples(accessToken, startIso, endIso);
     res.json({ samples });
   } catch (err) {
-    console.error('[metrics] heart-rate fetch failed:', err instanceof Error ? err.message : err);
-    res.status(502).json({ error: 'upstream_fetch_failed' });
+    respondError(res, 'heart-rate', err);
   }
 });
 
@@ -148,8 +162,7 @@ metricsRouter.get('/api/metrics/heart-rate-zones', async (req: AuthedRequest, re
       },
     });
   } catch (err) {
-    console.error('[metrics] heart-rate-zones fetch failed:', err instanceof Error ? err.message : err);
-    res.status(502).json({ error: 'upstream_fetch_failed' });
+    respondError(res, 'heart-rate-zones', err);
   }
 });
 
@@ -165,7 +178,6 @@ metricsRouter.get('/api/exercise', async (req: AuthedRequest, res) => {
     const sessions = upsertExerciseSessions(req.userId, await fetchExerciseList(accessToken, days));
     res.json({ sessions });
   } catch (err) {
-    console.error('[metrics] exercise fetch failed:', err instanceof Error ? err.message : err);
-    res.status(502).json({ error: 'upstream_fetch_failed' });
+    respondError(res, 'exercise', err);
   }
 });

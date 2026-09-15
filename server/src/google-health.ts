@@ -1,3 +1,5 @@
+import { classifyHealthApiFailure } from './errors.js';
+
 const BASE_URL = 'https://health.googleapis.com/v4';
 
 // Ported from the fork's src/api/activity.ts request shape, confirmed
@@ -31,7 +33,7 @@ async function healthFetch<T>(path: string, accessToken: string, init?: RequestI
     },
   });
   if (!res.ok) {
-    throw new Error(`Google Health API error (${res.status}): ${await res.text()}`);
+    throw classifyHealthApiFailure(res.status, await res.text(), res.headers.get('retry-after'));
   }
   return res.json() as Promise<T>;
 }

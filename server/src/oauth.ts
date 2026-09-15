@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { db } from './db.js';
 import { decryptSecret, encryptSecret } from './crypto.js';
+import { classifyRefreshFailure } from './errors.js';
 
 const AUTH_ENDPOINT = 'https://accounts.google.com/o/oauth2/v2/auth';
 const TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
@@ -116,7 +117,7 @@ async function refreshTokens(refreshToken: string): Promise<TokenResponse> {
     }),
   });
   if (!response.ok) {
-    throw new Error(`Token refresh failed (${response.status}): ${await response.text()}`);
+    throw classifyRefreshFailure(response.status, await response.text());
   }
   return (await response.json()) as TokenResponse;
 }

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, LabelList } from 'recharts';
 import { useAuth } from '../auth/AuthContext';
 import { getSleepFromBackend, type BackendSleepNight } from '../api/sleep';
-import { Card, LoadingCard, ErrorCard, EmptyCard } from './Card';
+import { Card, LoadingCard, EmptyCard, FreshnessNote, renderFetchError } from './Card';
 import { calcSleepScore } from '../utils/sleep-score';
 import { useDateRange } from '../context/DateRangeContext';
 
@@ -77,8 +77,9 @@ function SleepTooltip({ active, payload, label }: any) {
 export function SleepCard() {
   const { isAuthenticated } = useAuth();
   const [nights, setNights] = useState<NightData[]>([]);
+  const [latestDate, setLatestDate] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [activeStage, setActiveStage] = useState<string | null>(null);
   const { daysBack } = useDateRange();
 
@@ -89,20 +90,21 @@ export function SleepCard() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     getSleepFromBackend(daysBack)
-      .then((data) => {
+      .then((res) => {
         // Backend already returns nights oldest-first (see normalizeSleep).
-        const parsed = data
+        const parsed = res.nights
           .filter((n) => Object.keys(n.stageMinutes).length > 0)
           .map(parseNight)
           .filter((n) => n.total >= 120); // exclude naps
         setNights(parsed);
+        setLatestDate(res.latestDate);
       })
-      .catch((err) => setError(err.message))
+      .catch((err) => setError(err))
       .finally(() => setLoading(false));
   }, [isAuthenticated, daysBack]);
 
   if (loading) return <LoadingCard title="Sleep" />;
-  if (error) return <ErrorCard title="Sleep" error={error} />;
+  if (error) return renderFetchError('Sleep', error);
   if (nights.length === 0) return <EmptyCard title="Sleep" />;
 
   const lastNight = nights[nights.length - 1];
@@ -123,6 +125,7 @@ export function SleepCard() {
   return (
     <div className="md:col-span-2">
       <Card title="Sleep" subtitle={`Last ${daysBack} days`}>
+        <FreshnessNote latestDate={latestDate} />
         {/* Summary stats - single row */}
         <div className="flex items-baseline gap-4 mb-4 overflow-x-auto">
           <div className="flex items-baseline gap-1 shrink-0">

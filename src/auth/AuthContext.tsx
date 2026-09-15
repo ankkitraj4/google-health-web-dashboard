@@ -5,6 +5,12 @@ interface AuthState {
   isLoading: boolean;
   error: string | null;
   displayName: string | null;
+  // True only when the /api/session check itself failed (backend
+  // unreachable, network error) — distinct from a successful check that
+  // came back unauthenticated. Without this, a backend outage looks
+  // identical to "never logged in" and silently shows the login screen
+  // with no indication anything is wrong (plan milestone M7).
+  sessionCheckFailed: boolean;
   logout: () => void;
 }
 
@@ -13,6 +19,7 @@ const AuthContext = createContext<AuthState>({
   isLoading: true,
   error: null,
   displayName: null,
+  sessionCheckFailed: false,
   logout: () => {},
 });
 
@@ -32,15 +39,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState<string | null>(null);
+  const [sessionCheckFailed, setSessionCheckFailed] = useState(false);
 
   const checkSession = useCallback(async () => {
     try {
       const res = await fetch('/api/session', { credentials: 'same-origin' });
+      if (!res.ok) throw new Error(`Session check failed (${res.status})`);
       const data = (await res.json()) as SessionResponse;
       setIsAuthenticated(data.authenticated);
       setDisplayName(data.displayName ?? null);
+      setSessionCheckFailed(false);
     } catch {
+      // Couldn't even ask whether we're logged in — don't claim we know the
+      // answer is "no."
       setIsAuthenticated(false);
+      setSessionCheckFailed(true);
     }
   }, []);
 
@@ -64,7 +77,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ isAuthenticated, isLoading, error, displayName, logout }}>
+    <AuthContext.Provider value={{ isAuthenticated, isLoading, error, displayName, sessionCheckFailed, logout }}>
       {children}
     </AuthContext.Provider>
   );

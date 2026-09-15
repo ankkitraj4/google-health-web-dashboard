@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, Cell } from 'recharts';
 import { useAuth } from '../auth/AuthContext';
 import { getStepsDailyFromBackend, getCaloriesDailyFromBackend } from '../api/activity';
-import { Card, LoadingCard, ErrorCard, EmptyCard } from './Card';
+import { Card, LoadingCard, EmptyCard, FreshnessNote, renderFetchError } from './Card';
 import { useDateRange } from '../context/DateRangeContext';
 
 interface DayData {
@@ -37,24 +37,26 @@ export function ActivityCard() {
   const { daysBack } = useDateRange();
   const [stepsData, setStepsData] = useState<DayData[]>([]);
   const [totalCalories, setTotalCalories] = useState(0);
+  const [latestDate, setLatestDate] = useState<string | null>(null);
   const [goals, setGoals] = useState<StepsGoals>(loadGoals);
   const [editing, setEditing] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
 
   useEffect(() => {
     if (!isAuthenticated) return;
 
     Promise.all([getStepsDailyFromBackend(daysBack), getCaloriesDailyFromBackend(daysBack)])
       .then(([steps, calories]) => {
-        const mapped = steps.map((p) => {
+        const mapped = steps.points.map((p) => {
           const [, month, day] = p.date.split('-');
           return { date: `${Number(month)}/${Number(day)}`, steps: p.value };
         });
         setStepsData(mapped);
-        setTotalCalories(Math.round(calories.reduce((sum, c) => sum + c.value, 0)));
+        setLatestDate(steps.latestDate);
+        setTotalCalories(Math.round(calories.points.reduce((sum, c) => sum + c.value, 0)));
       })
-      .catch((err) => setError(err.message))
+      .catch((err) => setError(err))
       .finally(() => setLoading(false));
   }, [isAuthenticated, daysBack]);
 
@@ -65,7 +67,7 @@ export function ActivityCard() {
   }
 
   if (loading) return <LoadingCard title="Activity" />;
-  if (error) return <ErrorCard title="Activity" error={error} />;
+  if (error) return renderFetchError('Activity', error);
   if (stepsData.length === 0) return <EmptyCard title="Activity" />;
 
   const todaySteps = stepsData[stepsData.length - 1]?.steps || 0;
@@ -82,6 +84,7 @@ export function ActivityCard() {
 
   return (
     <Card title="Activity" subtitle={`Last ${daysBack} days`}>
+      <FreshnessNote latestDate={latestDate} />
       <div className="flex justify-between items-start mb-4">
         <div className="flex flex-wrap gap-6">
           <div>

@@ -9,6 +9,7 @@ import type {
   RestingHrDataPoint,
   HrvDataPoint,
   NutritionLogDataPoint,
+  PairedDevice,
   SleepDataPoint,
   ExerciseDataPoint,
 } from './google-health.js';
@@ -519,6 +520,40 @@ const upsertExerciseStmt = db.prepare(
      hr_zone_peak_s = excluded.hr_zone_peak_s,
      updated_at = excluded.updated_at`
 );
+
+db.exec(`
+  -- One row per (device, lastSyncTime) — a fresh Google fetch that reports
+  -- the same lastSyncTime as before means the tracker hasn't actually
+  -- synced again, so it's deliberately not re-inserted (M12). This makes
+  -- the table double as a battery-over-time and sync-cadence history
+  -- rather than just a single overwritten "current status" row.
+  CREATE TABLE IF NOT EXISTS device_snapshots (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    device_type TEXT NOT NULL,
+    last_sync_time INTEGER NOT NULL,
+    device_version TEXT,
+    battery_status TEXT,
+    battery_level INTEGER,
+    captured_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, device_type, last_sync_time)
+  );
+`);
+
+export function upsertDeviceSnapshots(userId: string, devices: PairedDevice[]): number {
+  const now = Date.now();
+  let count = 0;
+  for (const d of devices) {
+    if (!d.deviceType || !d.lastSyncTime) continue;
+    const result = db
+      .prepare(
+        `INSERT OR IGNORE INTO device_snapshots (user_id, device_type, last_sync_time, device_version, battery_status, battery_level, captured_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(userId, d.deviceType, new Date(d.lastSyncTime).getTime(), d.deviceVersion ?? null, d.batteryStatus ?? null, d.batteryLevel ?? null, now);
+    if (result.changes > 0) count++;
+  }
+  return count;
+}
 
 export function upsertExerciseSessions(userId: string, points: ExerciseDataPoint[]): ExerciseSession[] {
   const now = Date.now();

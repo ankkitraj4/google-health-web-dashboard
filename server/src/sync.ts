@@ -9,6 +9,7 @@ import {
   fetchHrvList,
   fetchOxygenSaturationSamples,
   fetchNutritionLogList,
+  fetchPairedDevices,
   fetchSleepList,
   fetchExerciseList,
   type DayRange,
@@ -24,6 +25,7 @@ import {
   upsertHrv,
   upsertSpo2Daily,
   upsertNutritionLogs,
+  upsertDeviceSnapshots,
   normalizeSleep,
   upsertSleepNights,
   upsertExerciseSessions,
@@ -185,6 +187,14 @@ export async function runBackfill(userId: string, accessToken: string, totalDays
     results.push({ metric: 'nutrition', chunks: 1, pointsUpserted: count });
   } catch (err) {
     results.push({ metric: 'nutrition', chunks: 0, pointsUpserted: 0, error: describeError(err) });
+  }
+
+  try {
+    const devices = await fetchPairedDevices(accessToken);
+    const count = upsertDeviceSnapshots(userId, devices);
+    results.push({ metric: 'device', chunks: 1, pointsUpserted: count });
+  } catch (err) {
+    results.push({ metric: 'device', chunks: 0, pointsUpserted: 0, error: describeError(err) });
   }
 
   try {

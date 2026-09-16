@@ -435,3 +435,21 @@ export async function fetchNutritionLogList(accessToken: string, daysBack: numbe
   } while (pageToken);
   return results;
 }
+
+// Confirmed live (M12) after re-consenting with the newly-added
+// googlehealth.settings.readonly scope — device provenance was
+// deliberately left out of scope entirely back in M2/M3, not just
+// unimplemented. Not a dataType, so no dailyRollUp/list shape here — this
+// is its own top-level resource under /users/me.
+export interface PairedDevice {
+  deviceType?: string;
+  deviceVersion?: string;
+  batteryStatus?: string;
+  batteryLevel?: number;
+  lastSyncTime?: string;
+}
+
+export async function fetchPairedDevices(accessToken: string): Promise<PairedDevice[]> {
+  const data = await withRetry(() => healthFetch<{ pairedDevices?: PairedDevice[] }>('/users/me/pairedDevices', accessToken));
+  return data.pairedDevices ?? [];
+}

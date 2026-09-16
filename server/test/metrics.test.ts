@@ -9,6 +9,7 @@ import {
   upsertHrv,
   upsertSpo2Daily,
   upsertNutritionLogs,
+  upsertDeviceSnapshots,
   normalizeSleep,
   upsertSleepNights,
   latestDate,
@@ -22,6 +23,7 @@ import type {
   RestingHrDataPoint,
   HrvDataPoint,
   NutritionLogDataPoint,
+  PairedDevice,
   SleepDataPoint,
   ExerciseDataPoint,
 } from '../src/google-health.js';
@@ -35,6 +37,7 @@ beforeEach(() => {
   db.exec('DELETE FROM hrv_daily');
   db.exec('DELETE FROM spo2_daily');
   db.exec('DELETE FROM nutrition_logs');
+  db.exec('DELETE FROM device_snapshots');
   db.exec('DELETE FROM users');
   // node:sqlite's DatabaseSync enforces FOREIGN KEY constraints by default —
   // metrics/exercise_sessions/sleep_nights.user_id all reference users(id).
@@ -294,6 +297,33 @@ describe('latestDate', () => {
   });
   it('returns null for an empty list', () => {
     expect(latestDate([])).toBeNull();
+  });
+});
+
+describe('upsertDeviceSnapshots', () => {
+  it('is idempotent on (device, lastSyncTime): re-fetching before the tracker syncs again inserts nothing new (M12)', () => {
+    const device: PairedDevice = {
+      deviceType: 'TRACKER',
+      deviceVersion: 'Fitbit Air',
+      batteryStatus: 'Medium',
+      batteryLevel: 28,
+      lastSyncTime: '2026-09-16T17:42:59Z',
+    };
+    expect(upsertDeviceSnapshots(TEST_USER, [device])).toBe(1);
+    expect(upsertDeviceSnapshots(TEST_USER, [device])).toBe(0); // same lastSyncTime — no new snapshot
+    const rows = db.prepare('SELECT * FROM device_snapshots WHERE user_id = ?').all(TEST_USER);
+    expect(rows).toHaveLength(1);
+
+    // A real subsequent sync (new lastSyncTime) does add a new row —
+    // this is meant to accumulate a battery/sync-cadence history, not
+    // just overwrite a single "current status" row.
+    const laterSync: PairedDevice = { ...device, lastSyncTime: '2026-09-16T18:00:00Z', batteryLevel: 27 };
+    expect(upsertDeviceSnapshots(TEST_USER, [laterSync])).toBe(1);
+    expect(db.prepare('SELECT COUNT(*) as c FROM device_snapshots WHERE user_id = ?').get(TEST_USER)).toEqual({ c: 2 });
+  });
+
+  it('skips a device with no type or no lastSyncTime', () => {
+    expect(upsertDeviceSnapshots(TEST_USER, [{ deviceType: 'TRACKER' }])).toBe(0);
   });
 });
 

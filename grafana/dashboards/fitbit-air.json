@@ -291,6 +291,44 @@
           "rawQueryText": "SELECT datetime(start_time/1000, 'unixepoch') as time, meal_type, food_name, energy_kcal as kcal, carbs_g, fat_g, protein_g FROM nutrition_logs WHERE user_id = (SELECT id FROM users LIMIT 1) ORDER BY start_time DESC LIMIT 100"
         }
       ]
+    },
+    {
+      "id": 14,
+      "title": "Device Status",
+      "type": "table",
+      "gridPos": { "h": 4, "w": 24, "x": 0, "y": 67 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "health-sqlite" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "frser-sqlite-datasource", "uid": "health-sqlite" },
+          "queryType": "table",
+          "queryText": "SELECT device_version, device_type, battery_status, battery_level as battery_pct, datetime(last_sync_time/1000, 'unixepoch') as last_synced FROM device_snapshots WHERE user_id = (SELECT id FROM users LIMIT 1) ORDER BY last_sync_time DESC LIMIT 1",
+          "rawQueryText": "SELECT device_version, device_type, battery_status, battery_level as battery_pct, datetime(last_sync_time/1000, 'unixepoch') as last_synced FROM device_snapshots WHERE user_id = (SELECT id FROM users LIMIT 1) ORDER BY last_sync_time DESC LIMIT 1"
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "title": "Battery Level Over Time",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 71 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "health-sqlite" },
+      "fieldConfig": {
+        "defaults": { "unit": "percent", "min": 0, "max": 100, "custom": { "drawStyle": "line", "fillOpacity": 20, "pointSize": 5, "showPoints": "always" } },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "frser-sqlite-datasource", "uid": "health-sqlite" },
+          "queryType": "time series",
+          "timeColumns": ["time"],
+          "queryText": "SELECT last_sync_time/1000 as time, battery_level as battery FROM device_snapshots WHERE user_id = (SELECT id FROM users LIMIT 1) ORDER BY last_sync_time",
+          "rawQueryText": "SELECT last_sync_time/1000 as time, battery_level as battery FROM device_snapshots WHERE user_id = (SELECT id FROM users LIMIT 1) ORDER BY last_sync_time"
+        }
+      ]
     }
   ]
 }

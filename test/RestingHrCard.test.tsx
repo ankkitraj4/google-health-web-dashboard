@@ -25,16 +25,19 @@ describe('RestingHrCard — capability-aware states (plan milestone M7)', () => 
   });
 
   it('renders real data with a freshness note once the fetch resolves', async () => {
+    // Computed relative to the real clock (not a hardcoded literal) so this
+    // stays inside the 36h freshness threshold no matter when the suite runs.
+    const today = new Date().toISOString().slice(0, 10);
     getRestingHrFromBackend.mockResolvedValue({
       points: [
         { date: '2026-09-14', value: 70 },
-        { date: '2026-09-15', value: 71 },
+        { date: today, value: 71 },
       ],
-      latestDate: '2026-09-15',
+      latestDate: today,
     });
     render(<RestingHrCard />);
     expect(await screen.findByText('71')).toBeInTheDocument();
-    expect(screen.getByText('Synced through 2026-09-15')).toBeInTheDocument();
+    expect(screen.getByText(`Synced through ${today}`)).toBeInTheDocument();
   });
 
   it('shows the empty state when there is no data yet, not an error', async () => {

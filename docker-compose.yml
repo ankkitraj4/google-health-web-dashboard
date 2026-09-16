@@ -2,12 +2,17 @@ services:
   health-dashboard:
     build: .
     ports:
-      - "8787:8787"
+      # Host 5173 -> container 8787: matches the redirect URI already
+      # registered on the OAuth client in Google Cloud Console
+      # (http://localhost:5173/callback) so no console changes are needed.
+      # The container still listens on 8787 internally regardless of host
+      # port (see PORT in the Dockerfile/env).
+      - "5173:8787"
     env_file:
       # Reuses your existing server/.env (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET,
-      # TOKEN_ENCRYPTION_KEY, WEBHOOK_AUTH_TOKEN, ...). Update OAUTH_REDIRECT_URI
-      # and FRONTEND_ORIGIN in it to match how you reach the container — see
-      # README.
+      # TOKEN_ENCRYPTION_KEY, WEBHOOK_AUTH_TOKEN, ...). OAUTH_REDIRECT_URI and
+      # FRONTEND_ORIGIN in it should stay pointed at :5173 to match the host
+      # port above — see README.
       - server/.env
     volumes:
       - health-data:/app/data

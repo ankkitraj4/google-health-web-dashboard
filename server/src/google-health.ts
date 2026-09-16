@@ -120,6 +120,43 @@ export function fetchCaloriesDailyRollup(accessToken: string, daysBack: number |
   return fetchDailyRollup<CaloriesRollupDataPoint>(accessToken, 'total-calories', daysBack);
 }
 
+// Confirmed live (plan milestone M10) against a real account: unlike M5's
+// finding, a daily distance rollup does exist — that finding was wrong,
+// most likely from a chunk-size or filter mistake, not an actual API gap.
+export interface DistanceRollupDataPoint {
+  civilStartTime?: { date?: { year: number; month: number; day: number } };
+  civilEndTime?: { date?: { year: number; month: number; day: number } };
+  distance?: { millimetersSum?: string };
+}
+
+export function fetchDistanceDailyRollup(accessToken: string, daysBack: number | DayRange) {
+  return fetchDailyRollup<DistanceRollupDataPoint>(accessToken, 'distance', daysBack);
+}
+
+// Confirmed live (M10): broken down by zone, same shape family as
+// active-minutes' per-level breakdown.
+export interface ActiveZoneMinutesRollupDataPoint {
+  civilStartTime?: { date?: { year: number; month: number; day: number } };
+  civilEndTime?: { date?: { year: number; month: number; day: number } };
+  activeZoneMinutes?: { sumInFatBurnHeartZone?: string; sumInCardioHeartZone?: string; sumInPeakHeartZone?: string };
+}
+
+export function fetchActiveZoneMinutesDailyRollup(accessToken: string, daysBack: number | DayRange) {
+  return fetchDailyRollup<ActiveZoneMinutesRollupDataPoint>(accessToken, 'active-zone-minutes', daysBack);
+}
+
+// Confirmed live (M10): only zones that were actually reached appear in the
+// array for a given day (e.g. a rest day may have only LIGHT).
+export interface TimeInHeartRateZoneRollupDataPoint {
+  civilStartTime?: { date?: { year: number; month: number; day: number } };
+  civilEndTime?: { date?: { year: number; month: number; day: number } };
+  timeInHeartRateZone?: { timeInHeartRateZones?: Array<{ heartRateZone: string; duration?: string }> };
+}
+
+export function fetchTimeInHeartRateZoneDailyRollup(accessToken: string, daysBack: number | DayRange) {
+  return fetchDailyRollup<TimeInHeartRateZoneRollupDataPoint>(accessToken, 'time-in-heart-rate-zone', daysBack);
+}
+
 export interface HeartRateDataPoint {
   heartRate?: { sampleTime?: { physicalTime?: string }; beatsPerMinute?: string };
 }
@@ -290,4 +327,72 @@ export async function fetchExerciseList(accessToken: string, daysBack: number): 
     const start = d.exercise?.interval?.startTime;
     return start ? new Date(start) >= cutoff : false;
   });
+}
+
+// Confirmed live (M10): same list+filter shape as daily-resting-heart-rate,
+// with a richer per-night payload (entropy, non-REM HR, deep-sleep RMSSD
+// come free in the same response).
+export interface HrvDataPoint {
+  dailyHeartRateVariability?: {
+    date?: { year: number; month: number; day: number };
+    averageHeartRateVariabilityMilliseconds?: number;
+    nonRemHeartRateBeatsPerMinute?: string;
+    entropy?: number;
+    deepSleepRootMeanSquareOfSuccessiveDifferencesMilliseconds?: number;
+  };
+}
+
+export async function fetchHrvList(accessToken: string, daysBack: number): Promise<HrvDataPoint[]> {
+  const startDate = new Date();
+  startDate.setDate(startDate.getDate() - daysBack);
+  const filter = `daily_heart_rate_variability.date >= "${startDate.toISOString().split('T')[0]}"`;
+  const results: HrvDataPoint[] = [];
+  let pageToken: string | undefined;
+  do {
+    const params = new URLSearchParams({ filter, page_size: '100' });
+    if (pageToken) params.set('page_token', pageToken);
+    const data = await withRetry(() =>
+      healthFetch<{ dataPoints?: HrvDataPoint[]; nextPageToken?: string }>(
+        `/users/me/dataTypes/daily-heart-rate-variability/dataPoints?${params}`,
+        accessToken
+      )
+    );
+    results.push(...(data.dataPoints ?? []));
+    pageToken = data.nextPageToken;
+  } while (pageToken);
+  return results;
+}
+
+// Confirmed live (M10): oxygen-saturation only supports list/reconcile, not
+// dailyRollUp ("DailyRollup is not supported for data type
+// oxygen-saturation" — a real 400 from Google, not a guess), so daily
+// avg/min/max has to be computed on our side from the raw samples, same
+// approach as intraday heart-rate.
+export interface OxygenSaturationDataPoint {
+  oxygenSaturation?: { sampleTime?: { physicalTime?: string }; percentage?: number };
+}
+
+export async function fetchOxygenSaturationSamples(accessToken: string, daysBack: number): Promise<Array<{ time: string; percentage: number }>> {
+  const startDate = new Date();
+  startDate.setDate(startDate.getDate() - daysBack);
+  const filter = `oxygen_saturation.sample_time.physical_time >= "${startDate.toISOString()}"`;
+  const samples: Array<{ time: string; percentage: number }> = [];
+  let pageToken: string | undefined;
+  do {
+    const params = new URLSearchParams({ filter, page_size: '1000' });
+    if (pageToken) params.set('page_token', pageToken);
+    const data = await withRetry(() =>
+      healthFetch<{ dataPoints?: OxygenSaturationDataPoint[]; nextPageToken?: string }>(
+        `/users/me/dataTypes/oxygen-saturation/dataPoints?${params}`,
+        accessToken
+      )
+    );
+    for (const d of data.dataPoints ?? []) {
+      if (d.oxygenSaturation?.sampleTime?.physicalTime && d.oxygenSaturation?.percentage != null) {
+        samples.push({ time: d.oxygenSaturation.sampleTime.physicalTime, percentage: d.oxygenSaturation.percentage });
+      }
+    }
+    pageToken = data.nextPageToken;
+  } while (pageToken);
+  return samples;
 }

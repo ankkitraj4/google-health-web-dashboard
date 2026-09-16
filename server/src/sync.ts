@@ -2,7 +2,12 @@ import {
   fetchStepsDailyRollup,
   fetchActiveMinutesDailyRollup,
   fetchCaloriesDailyRollup,
+  fetchDistanceDailyRollup,
+  fetchActiveZoneMinutesDailyRollup,
+  fetchTimeInHeartRateZoneDailyRollup,
   fetchRestingHrList,
+  fetchHrvList,
+  fetchOxygenSaturationSamples,
   fetchSleepList,
   fetchExerciseList,
   type DayRange,
@@ -11,8 +16,14 @@ import {
   upsertStepsRollup,
   upsertActiveMinutesRollup,
   upsertCaloriesRollup,
+  upsertDistanceRollup,
+  upsertActiveZoneMinutesRollup,
+  upsertTimeInHeartRateZoneRollup,
   upsertRestingHr,
+  upsertHrv,
+  upsertSpo2Daily,
   normalizeSleep,
+  upsertSleepNights,
   upsertExerciseSessions,
 } from './metrics.js';
 import { GoogleHealthApiError } from './errors.js';
@@ -99,6 +110,42 @@ export async function runBackfill(userId: string, accessToken: string, totalDays
   }
 
   try {
+    let pointsUpserted = 0;
+    for (const range of ranges) {
+      const points = await fetchDistanceDailyRollup(accessToken, range);
+      upsertDistanceRollup(userId, points);
+      pointsUpserted += points.length;
+    }
+    results.push({ metric: 'distance', chunks: ranges.length, pointsUpserted });
+  } catch (err) {
+    results.push({ metric: 'distance', chunks: 0, pointsUpserted: 0, error: describeError(err) });
+  }
+
+  try {
+    let pointsUpserted = 0;
+    for (const range of ranges) {
+      const points = await fetchActiveZoneMinutesDailyRollup(accessToken, range);
+      upsertActiveZoneMinutesRollup(userId, points);
+      pointsUpserted += points.length;
+    }
+    results.push({ metric: 'active-zone-minutes', chunks: ranges.length, pointsUpserted });
+  } catch (err) {
+    results.push({ metric: 'active-zone-minutes', chunks: 0, pointsUpserted: 0, error: describeError(err) });
+  }
+
+  try {
+    let pointsUpserted = 0;
+    for (const range of ranges) {
+      const points = await fetchTimeInHeartRateZoneDailyRollup(accessToken, range);
+      upsertTimeInHeartRateZoneRollup(userId, points);
+      pointsUpserted += points.length;
+    }
+    results.push({ metric: 'time-in-heart-rate-zone', chunks: ranges.length, pointsUpserted });
+  } catch (err) {
+    results.push({ metric: 'time-in-heart-rate-zone', chunks: 0, pointsUpserted: 0, error: describeError(err) });
+  }
+
+  try {
     const points = await fetchRestingHrList(accessToken, totalDays);
     upsertRestingHr(userId, points);
     results.push({ metric: 'resting-heart-rate', chunks: 1, pointsUpserted: points.length });
@@ -107,8 +154,24 @@ export async function runBackfill(userId: string, accessToken: string, totalDays
   }
 
   try {
+    const points = await fetchHrvList(accessToken, totalDays);
+    const count = upsertHrv(userId, points);
+    results.push({ metric: 'hrv', chunks: 1, pointsUpserted: count });
+  } catch (err) {
+    results.push({ metric: 'hrv', chunks: 0, pointsUpserted: 0, error: describeError(err) });
+  }
+
+  try {
+    const samples = await fetchOxygenSaturationSamples(accessToken, totalDays);
+    const days = upsertSpo2Daily(userId, samples);
+    results.push({ metric: 'spo2', chunks: 1, pointsUpserted: days });
+  } catch (err) {
+    results.push({ metric: 'spo2', chunks: 0, pointsUpserted: 0, error: describeError(err) });
+  }
+
+  try {
     const points = await fetchSleepList(accessToken, totalDays);
-    const nights = normalizeSleep(points);
+    const nights = upsertSleepNights(userId, normalizeSleep(points));
     results.push({ metric: 'sleep', chunks: 1, pointsUpserted: nights.length });
   } catch (err) {
     results.push({ metric: 'sleep', chunks: 0, pointsUpserted: 0, error: describeError(err) });
@@ -127,9 +190,8 @@ export async function runBackfill(userId: string, accessToken: string, totalDays
 
 // Scoped refresh for one metric's window — used by the webhook handler
 // (M8). Maps Google's dataType name to the matching fetch+upsert pair.
-// Returns null for dataTypes we don't persist (sleep has no server-side
-// store — see M5/M6 — so there's nothing to refresh into) or don't
-// recognize, rather than silently pretending to have handled them.
+// Returns null for dataTypes we don't recognize, rather than silently
+// pretending to have handled them.
 export async function refreshMetricWindow(
   userId: string,
   accessToken: string,
@@ -152,11 +214,44 @@ export async function refreshMetricWindow(
       upsertCaloriesRollup(userId, points);
       return { metric: 'calories', pointsUpserted: points.length };
     }
+    case 'distance': {
+      const points = await fetchDistanceDailyRollup(accessToken, range);
+      upsertDistanceRollup(userId, points);
+      return { metric: 'distance', pointsUpserted: points.length };
+    }
+    case 'active-zone-minutes': {
+      const points = await fetchActiveZoneMinutesDailyRollup(accessToken, range);
+      upsertActiveZoneMinutesRollup(userId, points);
+      return { metric: 'active-zone-minutes', pointsUpserted: points.length };
+    }
+    case 'time-in-heart-rate-zone': {
+      const points = await fetchTimeInHeartRateZoneDailyRollup(accessToken, range);
+      upsertTimeInHeartRateZoneRollup(userId, points);
+      return { metric: 'time-in-heart-rate-zone', pointsUpserted: points.length };
+    }
     case 'daily-resting-heart-rate': {
       const daysBack = Math.max(range.startDaysBack, 1);
       const points = await fetchRestingHrList(accessToken, daysBack);
       upsertRestingHr(userId, points);
       return { metric: 'resting-heart-rate', pointsUpserted: points.length };
+    }
+    case 'daily-heart-rate-variability': {
+      const daysBack = Math.max(range.startDaysBack, 1);
+      const points = await fetchHrvList(accessToken, daysBack);
+      const count = upsertHrv(userId, points);
+      return { metric: 'hrv', pointsUpserted: count };
+    }
+    case 'oxygen-saturation': {
+      const daysBack = Math.max(range.startDaysBack, 1);
+      const samples = await fetchOxygenSaturationSamples(accessToken, daysBack);
+      const days = upsertSpo2Daily(userId, samples);
+      return { metric: 'spo2', pointsUpserted: days };
+    }
+    case 'sleep': {
+      const daysBack = Math.max(range.startDaysBack, 1);
+      const points = await fetchSleepList(accessToken, daysBack);
+      const nights = upsertSleepNights(userId, normalizeSleep(points));
+      return { metric: 'sleep', pointsUpserted: nights.length };
     }
     case 'exercise': {
       const daysBack = Math.max(range.startDaysBack, 1);

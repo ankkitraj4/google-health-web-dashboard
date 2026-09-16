@@ -3,7 +3,11 @@ import type {
   StepsRollupDataPoint,
   ActiveMinutesRollupDataPoint,
   CaloriesRollupDataPoint,
+  DistanceRollupDataPoint,
+  ActiveZoneMinutesRollupDataPoint,
+  TimeInHeartRateZoneRollupDataPoint,
   RestingHrDataPoint,
+  HrvDataPoint,
   SleepDataPoint,
   ExerciseDataPoint,
 } from './google-health.js';
@@ -189,6 +193,142 @@ export function upsertRestingHr(userId: string, points: RestingHrDataPoint[]): D
         value: Number(p.dailyRestingHeartRate?.beatsPerMinute ?? 0),
       }))
   );
+}
+
+export function upsertDistanceRollup(userId: string, points: DistanceRollupDataPoint[]): DailyPoint[] {
+  return upsertDaily(
+    userId,
+    'distance',
+    'mm',
+    points.map((p) => ({ start: p.civilStartTime?.date, end: p.civilEndTime?.date, value: Number(p.distance?.millimetersSum ?? 0) }))
+  );
+}
+
+// One metrics-table row per zone per day (metric_type: azm-fat-burn/-cardio/
+// -peak) rather than a dedicated table — this is three plain daily scalars,
+// the same shape upsertDaily already handles, not a fixed multi-field
+// record like a sleep night or exercise session.
+const AZM_ZONES = [
+  { field: 'sumInFatBurnHeartZone', metricType: 'azm-fat-burn' },
+  { field: 'sumInCardioHeartZone', metricType: 'azm-cardio' },
+  { field: 'sumInPeakHeartZone', metricType: 'azm-peak' },
+] as const;
+
+export function upsertActiveZoneMinutesRollup(userId: string, points: ActiveZoneMinutesRollupDataPoint[]): void {
+  for (const zone of AZM_ZONES) {
+    upsertDaily(
+      userId,
+      zone.metricType,
+      'minutes',
+      points.map((p) => ({
+        start: p.civilStartTime?.date,
+        end: p.civilEndTime?.date,
+        value: Number(p.activeZoneMinutes?.[zone.field] ?? 0),
+      }))
+    );
+  }
+}
+
+const HR_ZONE_TYPES = ['LIGHT', 'MODERATE', 'VIGOROUS', 'PEAK'] as const;
+
+export function upsertTimeInHeartRateZoneRollup(userId: string, points: TimeInHeartRateZoneRollupDataPoint[]): void {
+  for (const zoneType of HR_ZONE_TYPES) {
+    upsertDaily(
+      userId,
+      `hr-zone-${zoneType.toLowerCase()}`,
+      'minutes',
+      points.map((p) => {
+        const entry = p.timeInHeartRateZone?.timeInHeartRateZones?.find((z) => z.heartRateZone === zoneType);
+        const seconds = parseDurationSeconds(entry?.duration) ?? 0;
+        return { start: p.civilStartTime?.date, end: p.civilEndTime?.date, value: Math.round(seconds / 60) };
+      })
+    );
+  }
+}
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS hrv_daily (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    date TEXT NOT NULL,
+    avg_hrv_ms REAL NOT NULL,
+    non_rem_hr_bpm REAL,
+    entropy REAL,
+    deep_sleep_rmssd_ms REAL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, date)
+  );
+
+  CREATE TABLE IF NOT EXISTS spo2_daily (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    date TEXT NOT NULL,
+    avg_percentage REAL NOT NULL,
+    min_percentage REAL NOT NULL,
+    max_percentage REAL NOT NULL,
+    sample_count INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, date)
+  );
+`);
+
+const upsertHrvStmt = db.prepare(
+  `INSERT INTO hrv_daily (user_id, date, avg_hrv_ms, non_rem_hr_bpm, entropy, deep_sleep_rmssd_ms, updated_at)
+   VALUES (?, ?, ?, ?, ?, ?, ?)
+   ON CONFLICT(user_id, date) DO UPDATE SET
+     avg_hrv_ms = excluded.avg_hrv_ms,
+     non_rem_hr_bpm = excluded.non_rem_hr_bpm,
+     entropy = excluded.entropy,
+     deep_sleep_rmssd_ms = excluded.deep_sleep_rmssd_ms,
+     updated_at = excluded.updated_at`
+);
+
+export function upsertHrv(userId: string, points: HrvDataPoint[]): number {
+  const now = Date.now();
+  let count = 0;
+  for (const p of points) {
+    const hrv = p.dailyHeartRateVariability;
+    if (!hrv?.date || hrv.averageHeartRateVariabilityMilliseconds == null) continue;
+    upsertHrvStmt.run(
+      userId,
+      isoDate(hrv.date),
+      hrv.averageHeartRateVariabilityMilliseconds,
+      hrv.nonRemHeartRateBeatsPerMinute ? Number(hrv.nonRemHeartRateBeatsPerMinute) : null,
+      hrv.entropy ?? null,
+      hrv.deepSleepRootMeanSquareOfSuccessiveDifferencesMilliseconds ?? null,
+      now
+    );
+    count++;
+  }
+  return count;
+}
+
+const upsertSpo2Stmt = db.prepare(
+  `INSERT INTO spo2_daily (user_id, date, avg_percentage, min_percentage, max_percentage, sample_count, updated_at)
+   VALUES (?, ?, ?, ?, ?, ?, ?)
+   ON CONFLICT(user_id, date) DO UPDATE SET
+     avg_percentage = excluded.avg_percentage,
+     min_percentage = excluded.min_percentage,
+     max_percentage = excluded.max_percentage,
+     sample_count = excluded.sample_count,
+     updated_at = excluded.updated_at`
+);
+
+// oxygen-saturation only supports list/reconcile, not dailyRollUp (a real
+// 400 from Google, confirmed live — M10), so daily avg/min/max is computed
+// here from the raw samples rather than asked of the API directly.
+export function upsertSpo2Daily(userId: string, samples: Array<{ time: string; percentage: number }>): number {
+  const byDate = new Map<string, number[]>();
+  for (const s of samples) {
+    const date = s.time.slice(0, 10);
+    const list = byDate.get(date) ?? [];
+    list.push(s.percentage);
+    byDate.set(date, list);
+  }
+  const now = Date.now();
+  for (const [date, values] of byDate) {
+    const avg = values.reduce((sum, v) => sum + v, 0) / values.length;
+    upsertSpo2Stmt.run(userId, date, avg, Math.min(...values), Math.max(...values), values.length, now);
+  }
+  return byDate.size;
 }
 
 export interface SleepNight {

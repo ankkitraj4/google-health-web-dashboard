@@ -2,13 +2,27 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { db } from '../src/db.js';
 import {
   upsertStepsRollup,
+  upsertDistanceRollup,
+  upsertActiveZoneMinutesRollup,
+  upsertTimeInHeartRateZoneRollup,
   upsertRestingHr,
+  upsertHrv,
+  upsertSpo2Daily,
   normalizeSleep,
   upsertSleepNights,
   latestDate,
   upsertExerciseSessions,
 } from '../src/metrics.js';
-import type { StepsRollupDataPoint, RestingHrDataPoint, SleepDataPoint, ExerciseDataPoint } from '../src/google-health.js';
+import type {
+  StepsRollupDataPoint,
+  DistanceRollupDataPoint,
+  ActiveZoneMinutesRollupDataPoint,
+  TimeInHeartRateZoneRollupDataPoint,
+  RestingHrDataPoint,
+  HrvDataPoint,
+  SleepDataPoint,
+  ExerciseDataPoint,
+} from '../src/google-health.js';
 
 const TEST_USER = 'test-user-1';
 
@@ -16,6 +30,8 @@ beforeEach(() => {
   db.exec('DELETE FROM metrics');
   db.exec('DELETE FROM exercise_sessions');
   db.exec('DELETE FROM sleep_nights');
+  db.exec('DELETE FROM hrv_daily');
+  db.exec('DELETE FROM spo2_daily');
   db.exec('DELETE FROM users');
   // node:sqlite's DatabaseSync enforces FOREIGN KEY constraints by default —
   // metrics/exercise_sessions/sleep_nights.user_id all reference users(id).
@@ -61,6 +77,108 @@ describe('upsertRestingHr', () => {
     ];
     const result = upsertRestingHr(TEST_USER, points);
     expect(result).toEqual([{ date: '2026-09-15', value: 71 }]);
+  });
+});
+
+describe('upsertDistanceRollup', () => {
+  it('parses the real distance dailyRollUp shape (M10 — corrects M5\'s wrong "no distance data type" finding)', () => {
+    const points: DistanceRollupDataPoint[] = [
+      { civilStartTime: { date: { year: 2026, month: 9, day: 16 } }, distance: { millimetersSum: '1592800' } },
+    ];
+    const result = upsertDistanceRollup(TEST_USER, points);
+    expect(result).toEqual([{ date: '2026-09-16', value: 1592800 }]);
+  });
+});
+
+describe('upsertActiveZoneMinutesRollup', () => {
+  it('splits the three zones into separate metric_type rows', () => {
+    const points: ActiveZoneMinutesRollupDataPoint[] = [
+      {
+        civilStartTime: { date: { year: 2026, month: 9, day: 16 } },
+        activeZoneMinutes: { sumInFatBurnHeartZone: '6', sumInCardioHeartZone: '2', sumInPeakHeartZone: '0' },
+      },
+    ];
+    upsertActiveZoneMinutesRollup(TEST_USER, points);
+    const rows = db
+      .prepare('SELECT metric_type, value FROM metrics WHERE user_id = ? ORDER BY metric_type')
+      .all(TEST_USER) as Array<{ metric_type: string; value: number }>;
+    expect(rows).toEqual([
+      { metric_type: 'azm-cardio', value: 2 },
+      { metric_type: 'azm-fat-burn', value: 6 },
+      { metric_type: 'azm-peak', value: 0 },
+    ]);
+  });
+});
+
+describe('upsertTimeInHeartRateZoneRollup', () => {
+  it('converts each present zone\'s duration to minutes, defaulting absent zones to 0', () => {
+    const points: TimeInHeartRateZoneRollupDataPoint[] = [
+      {
+        civilStartTime: { date: { year: 2026, month: 9, day: 16 } },
+        timeInHeartRateZone: {
+          timeInHeartRateZones: [
+            { heartRateZone: 'LIGHT', duration: '67800s' },
+            { heartRateZone: 'MODERATE', duration: '420s' },
+          ],
+        },
+      },
+    ];
+    upsertTimeInHeartRateZoneRollup(TEST_USER, points);
+    const rows = db
+      .prepare('SELECT metric_type, value FROM metrics WHERE user_id = ? ORDER BY metric_type')
+      .all(TEST_USER) as Array<{ metric_type: string; value: number }>;
+    expect(rows).toEqual([
+      { metric_type: 'hr-zone-light', value: 1130 },
+      { metric_type: 'hr-zone-moderate', value: 7 },
+      { metric_type: 'hr-zone-peak', value: 0 },
+      { metric_type: 'hr-zone-vigorous', value: 0 },
+    ]);
+  });
+});
+
+describe('upsertHrv', () => {
+  it('is idempotent on date and stores the richer sub-fields (M10)', () => {
+    const points: HrvDataPoint[] = [
+      {
+        dailyHeartRateVariability: {
+          date: { year: 2026, month: 9, day: 16 },
+          averageHeartRateVariabilityMilliseconds: 17.3,
+          nonRemHeartRateBeatsPerMinute: '65',
+          entropy: 2.171,
+          deepSleepRootMeanSquareOfSuccessiveDifferencesMilliseconds: 17.8,
+        },
+      },
+    ];
+    expect(upsertHrv(TEST_USER, points)).toBe(1);
+    expect(upsertHrv(TEST_USER, points)).toBe(1); // re-ingest: still one row, not two
+    const row = db.prepare('SELECT * FROM hrv_daily WHERE user_id = ?').get(TEST_USER) as Record<string, unknown>;
+    expect(row.avg_hrv_ms).toBe(17.3);
+    expect(row.non_rem_hr_bpm).toBe(65);
+    expect(row.entropy).toBe(2.171);
+    expect(row.deep_sleep_rmssd_ms).toBe(17.8);
+  });
+
+  it('skips points missing a date or the average value', () => {
+    expect(upsertHrv(TEST_USER, [{ dailyHeartRateVariability: {} }])).toBe(0);
+  });
+});
+
+describe('upsertSpo2Daily', () => {
+  it('aggregates raw samples into one avg/min/max row per calendar day (oxygen-saturation has no dailyRollUp support — confirmed live, M10)', () => {
+    const samples = [
+      { time: '2026-09-16T05:00:00Z', percentage: 94 },
+      { time: '2026-09-16T05:01:00Z', percentage: 96 },
+      { time: '2026-09-15T22:00:00Z', percentage: 92 },
+    ];
+    const days = upsertSpo2Daily(TEST_USER, samples);
+    expect(days).toBe(2);
+    const rows = db
+      .prepare('SELECT date, avg_percentage, min_percentage, max_percentage, sample_count FROM spo2_daily WHERE user_id = ? ORDER BY date')
+      .all(TEST_USER);
+    expect(rows).toEqual([
+      { date: '2026-09-15', avg_percentage: 92, min_percentage: 92, max_percentage: 92, sample_count: 1 },
+      { date: '2026-09-16', avg_percentage: 95, min_percentage: 94, max_percentage: 96, sample_count: 2 },
+    ]);
   });
 });
 

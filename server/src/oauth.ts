@@ -8,9 +8,12 @@ const TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
 const REVOKE_ENDPOINT = 'https://oauth2.googleapis.com/revoke';
 
 // Scopes confirmed working against a real Google Fitbit Air account in plan
-// milestone M2. `settings.readonly` (needed for pairedDevices) is deliberately
-// left out — add it back (and re-declare it under Data Access in Cloud
-// Console) if device-provenance data becomes a real requirement.
+// milestone M2. `settings.readonly` (needed for pairedDevices/device info)
+// was added in M11 at the user's request to collect everything available —
+// it must also be declared under Data Access in Google Cloud Console before
+// Google will actually grant it; requesting an undeclared restricted scope
+// hard-blocks the *entire* auth request (see M2's finding), not just this
+// one scope.
 const SCOPES = [
   'openid',
   'https://www.googleapis.com/auth/userinfo.profile',
@@ -19,6 +22,7 @@ const SCOPES = [
   'https://www.googleapis.com/auth/googlehealth.nutrition.readonly',
   'https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly',
   'https://www.googleapis.com/auth/googlehealth.profile.readonly',
+  'https://www.googleapis.com/auth/googlehealth.settings.readonly',
 ].join(' ');
 
 function requiredEnv(name: string): string {

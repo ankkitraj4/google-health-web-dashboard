@@ -1,0 +1,140 @@
+{
+  "title": "Fitbit Air",
+  "uid": "fitbit-air",
+  "tags": ["health-dashboard"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "5m",
+  "time": { "from": "now-30d", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Steps",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "health-sqlite" },
+      "fieldConfig": {
+        "defaults": { "unit": "none", "custom": { "drawStyle": "bars", "fillOpacity": 60 } },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "frser-sqlite-datasource", "uid": "health-sqlite" },
+          "queryType": "time series",
+          "timeColumns": ["time"],
+          "queryText": "SELECT start_time/1000 as time, value as steps FROM metrics WHERE metric_type = 'steps' AND user_id = (SELECT id FROM users LIMIT 1) ORDER BY start_time",
+          "rawQueryText": "SELECT start_time/1000 as time, value as steps FROM metrics WHERE metric_type = 'steps' AND user_id = (SELECT id FROM users LIMIT 1) ORDER BY start_time"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Calories",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "health-sqlite" },
+      "fieldConfig": {
+        "defaults": { "unit": "none", "custom": { "drawStyle": "bars", "fillOpacity": 60 } },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "frser-sqlite-datasource", "uid": "health-sqlite" },
+          "queryType": "time series",
+          "timeColumns": ["time"],
+          "queryText": "SELECT start_time/1000 as time, value as kcal FROM metrics WHERE metric_type = 'calories' AND user_id = (SELECT id FROM users LIMIT 1) ORDER BY start_time",
+          "rawQueryText": "SELECT start_time/1000 as time, value as kcal FROM metrics WHERE metric_type = 'calories' AND user_id = (SELECT id FROM users LIMIT 1) ORDER BY start_time"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Resting Heart Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "health-sqlite" },
+      "fieldConfig": {
+        "defaults": { "unit": "none", "custom": { "drawStyle": "line", "fillOpacity": 10, "pointSize": 5, "showPoints": "always" } },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "frser-sqlite-datasource", "uid": "health-sqlite" },
+          "queryType": "time series",
+          "timeColumns": ["time"],
+          "queryText": "SELECT start_time/1000 as time, value as bpm FROM metrics WHERE metric_type = 'resting-heart-rate' AND user_id = (SELECT id FROM users LIMIT 1) ORDER BY start_time",
+          "rawQueryText": "SELECT start_time/1000 as time, value as bpm FROM metrics WHERE metric_type = 'resting-heart-rate' AND user_id = (SELECT id FROM users LIMIT 1) ORDER BY start_time"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Active Minutes",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "health-sqlite" },
+      "fieldConfig": {
+        "defaults": { "unit": "m", "custom": { "drawStyle": "bars", "fillOpacity": 60 } },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "frser-sqlite-datasource", "uid": "health-sqlite" },
+          "queryType": "time series",
+          "timeColumns": ["time"],
+          "queryText": "SELECT start_time/1000 as time, value as minutes FROM metrics WHERE metric_type = 'active-minutes' AND user_id = (SELECT id FROM users LIMIT 1) ORDER BY start_time",
+          "rawQueryText": "SELECT start_time/1000 as time, value as minutes FROM metrics WHERE metric_type = 'active-minutes' AND user_id = (SELECT id FROM users LIMIT 1) ORDER BY start_time"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Sleep Stages",
+      "type": "timeseries",
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 16 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "health-sqlite" },
+      "fieldConfig": {
+        "defaults": { "unit": "m", "custom": { "drawStyle": "bars", "fillOpacity": 100, "stacking": { "mode": "normal", "group": "A" } } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Awake" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }] },
+          { "matcher": { "id": "byName", "options": "Deep" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "dark-blue" } }] },
+          { "matcher": { "id": "byName", "options": "Light" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "light-blue" } }] },
+          { "matcher": { "id": "byName", "options": "REM" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "purple" } }] }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "frser-sqlite-datasource", "uid": "health-sqlite" },
+          "queryType": "time series",
+          "timeColumns": ["time"],
+          "queryText": "SELECT start_time/1000 as time, stage_deep as Deep, stage_light as Light, stage_rem as REM, stage_awake as Awake FROM sleep_nights WHERE user_id = (SELECT id FROM users LIMIT 1) ORDER BY start_time",
+          "rawQueryText": "SELECT start_time/1000 as time, stage_deep as Deep, stage_light as Light, stage_rem as REM, stage_awake as Awake FROM sleep_nights WHERE user_id = (SELECT id FROM users LIMIT 1) ORDER BY start_time"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Exercise Sessions",
+      "type": "table",
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 25 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "health-sqlite" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "frser-sqlite-datasource", "uid": "health-sqlite" },
+          "queryType": "table",
+          "queryText": "SELECT datetime(start_time/1000, 'unixepoch') as start, exercise_type as type, display_name as name, ROUND((julianday(datetime(end_time/1000,'unixepoch')) - julianday(datetime(start_time/1000,'unixepoch'))) * 1440, 1) as duration_min, calories_kcal as kcal, ROUND(distance_mm / 1000000.0, 2) as distance_km, avg_heart_rate as avg_bpm FROM exercise_sessions WHERE user_id = (SELECT id FROM users LIMIT 1) ORDER BY start_time DESC LIMIT 50",
+          "rawQueryText": "SELECT datetime(start_time/1000, 'unixepoch') as start, exercise_type as type, display_name as name, ROUND((julianday(datetime(end_time/1000,'unixepoch')) - julianday(datetime(start_time/1000,'unixepoch'))) * 1440, 1) as duration_min, calories_kcal as kcal, ROUND(distance_mm / 1000000.0, 2) as distance_km, avg_heart_rate as avg_bpm FROM exercise_sessions WHERE user_id = (SELECT id FROM users LIMIT 1) ORDER BY start_time DESC LIMIT 50"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+apiVersion: 1
+datasources:
+  - name: Health Dashboard SQLite
+    uid: health-sqlite
+    type: frser-sqlite-datasource
+    access: proxy
+    isDefault: true
+    jsonData:
+      path: /data/dev.sqlite3
+    editable: true

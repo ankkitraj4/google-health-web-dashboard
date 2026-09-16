@@ -18,6 +18,7 @@ import {
   upsertCaloriesRollup,
   upsertRestingHr,
   normalizeSleep,
+  upsertSleepNights,
   upsertExerciseSessions,
   latestDate,
 } from '../metrics.js';
@@ -102,7 +103,7 @@ metricsRouter.get('/api/metrics/sleep', async (req: AuthedRequest, res) => {
   if (!requireAuth(req, res)) return;
   try {
     const accessToken = await getValidAccessToken(req.userId);
-    const nights = normalizeSleep(await fetchSleepList(accessToken, daysParam(req)));
+    const nights = upsertSleepNights(req.userId, normalizeSleep(await fetchSleepList(accessToken, daysParam(req))));
     res.json({ nights, latestDate: nights.length ? nights[nights.length - 1].date : null });
   } catch (err) {
     respondError(res, 'sleep', err);

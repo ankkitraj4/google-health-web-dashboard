@@ -23,6 +23,14 @@ docker build -t health-dashboard .
 docker run -p 5173:8787 --env-file server/.env -v health-data:/app/data health-dashboard
 ```
 
+## Grafana dashboard
+
+`docker compose up` also starts a Grafana instance at `http://localhost:3000` (default login `admin`/`admin`, which Grafana will prompt you to change) with a "Fitbit Air" dashboard preloaded, showing Steps, Calories, Resting Heart Rate, Active Minutes, Sleep Stages, and an Exercise Sessions table.
+
+It reads directly from the same SQLite file the app writes to, via the [`frser-sqlite-datasource`](https://github.com/fr-ser/grafana-sqlite-datasource) community plugin (installed and provisioned automatically — see `grafana/provisioning/` and `docker-compose.yml`), mounted **read-only**. There's no live-sync job: the dashboard only shows whatever the app has already fetched from Google and persisted, so open the app and view a card at least once (which triggers that metric's hot-sync) before expecting data in Grafana.
+
+To edit the dashboard, use Grafana's UI and export the JSON back into `grafana/dashboards/fitbit-air.json` — editing it in place there won't take effect until you also save through the UI, since file-provisioned dashboards get overwritten by the file on every Grafana restart. Two schema quirks worth knowing if you add panels: the SQLite plugin needs epoch **seconds** (not ms) for its time column, and each query target needs the SQL in both `queryText` and `rawQueryText` (the backend reads `rawQueryText`; the query editor UI reads `queryText` for display) — a target with only one of the two will silently show the wrong query or "No data".
+
 # React + TypeScript + Vite
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.

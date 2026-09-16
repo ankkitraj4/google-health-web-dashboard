@@ -51,6 +51,25 @@ db.exec(`
     updated_at INTEGER NOT NULL,
     PRIMARY KEY (user_id, source_id)
   );
+
+  -- Sleep is one row per night (keyed by wake-up date), not a single scalar
+  -- per day like the shared metrics table, so it gets its own table —
+  -- added in plan milestone M10 once a durable store (not just an
+  -- HTTP-response-shaped normalization) was needed for the Grafana dashboard.
+  CREATE TABLE IF NOT EXISTS sleep_nights (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    date TEXT NOT NULL,
+    start_time INTEGER NOT NULL,
+    end_time INTEGER NOT NULL,
+    minutes_asleep INTEGER NOT NULL,
+    minutes_awake INTEGER NOT NULL,
+    stage_deep INTEGER NOT NULL DEFAULT 0,
+    stage_light INTEGER NOT NULL DEFAULT 0,
+    stage_rem INTEGER NOT NULL DEFAULT 0,
+    stage_awake INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, date)
+  );
 `);
 
 // Adds columns introduced after the initial exercise_sessions table shipped
@@ -203,6 +222,47 @@ export function normalizeSleep(points: SleepDataPoint[]): SleepNight[] {
       };
     })
     .reverse();
+}
+
+const upsertSleepStmt = db.prepare(
+  `INSERT INTO sleep_nights (
+     user_id, date, start_time, end_time, minutes_asleep, minutes_awake,
+     stage_deep, stage_light, stage_rem, stage_awake, updated_at
+   )
+   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+   ON CONFLICT(user_id, date) DO UPDATE SET
+     start_time = excluded.start_time,
+     end_time = excluded.end_time,
+     minutes_asleep = excluded.minutes_asleep,
+     minutes_awake = excluded.minutes_awake,
+     stage_deep = excluded.stage_deep,
+     stage_light = excluded.stage_light,
+     stage_rem = excluded.stage_rem,
+     stage_awake = excluded.stage_awake,
+     updated_at = excluded.updated_at`
+);
+
+// Persists nights for the sleep dashboard/Grafana (plan milestone M10) —
+// the frontend keeps consuming normalizeSleep()'s return value directly, so
+// this call is additive and can't regress the existing sleep card.
+export function upsertSleepNights(userId: string, nights: SleepNight[]): SleepNight[] {
+  const now = Date.now();
+  for (const n of nights) {
+    upsertSleepStmt.run(
+      userId,
+      n.date,
+      new Date(n.startTime).getTime(),
+      new Date(n.endTime).getTime(),
+      n.minutesAsleep,
+      n.minutesAwake,
+      n.stageMinutes.DEEP ?? 0,
+      n.stageMinutes.LIGHT ?? 0,
+      n.stageMinutes.REM ?? 0,
+      n.stageMinutes.AWAKE ?? 0,
+      now
+    );
+  }
+  return nights;
 }
 
 function parseDurationSeconds(dur?: string): number | null {

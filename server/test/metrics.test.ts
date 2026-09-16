@@ -4,6 +4,7 @@ import {
   upsertStepsRollup,
   upsertRestingHr,
   normalizeSleep,
+  upsertSleepNights,
   latestDate,
   upsertExerciseSessions,
 } from '../src/metrics.js';
@@ -14,9 +15,10 @@ const TEST_USER = 'test-user-1';
 beforeEach(() => {
   db.exec('DELETE FROM metrics');
   db.exec('DELETE FROM exercise_sessions');
+  db.exec('DELETE FROM sleep_nights');
   db.exec('DELETE FROM users');
   // node:sqlite's DatabaseSync enforces FOREIGN KEY constraints by default —
-  // metrics/exercise_sessions.user_id both reference users(id).
+  // metrics/exercise_sessions/sleep_nights.user_id all reference users(id).
   const now = Date.now();
   db.prepare('INSERT INTO users (id, health_user_id, created_at, updated_at) VALUES (?, ?, ?, ?)').run(TEST_USER, 'health-test-user-1', now, now);
 });
@@ -85,13 +87,53 @@ describe('normalizeSleep', () => {
     expect(night.stageMinutes).toEqual({ DEEP: 78, REM: 73 });
   });
 
-  it('does not persist to the DB (sleep has no server-side store, per M6)', () => {
-    const before = db.prepare('SELECT COUNT(*) as c FROM metrics').get() as { c: number };
+  it('is a pure function — persistence is a separate step (upsertSleepNights, below)', () => {
+    const before = db.prepare('SELECT COUNT(*) as c FROM sleep_nights').get() as { c: number };
     normalizeSleep([
       { sleep: { interval: { startTime: '2026-09-13T22:00:00Z', endTime: '2026-09-14T06:00:00Z' }, summary: {} } },
     ]);
-    const after = db.prepare('SELECT COUNT(*) as c FROM metrics').get() as { c: number };
+    const after = db.prepare('SELECT COUNT(*) as c FROM sleep_nights').get() as { c: number };
     expect(after.c).toBe(before.c);
+  });
+});
+
+describe('upsertSleepNights', () => {
+  it('is idempotent on night (keyed by wake-up date): re-ingesting overwrites, not duplicates (plan milestone M10)', () => {
+    const night = {
+      date: '2026-09-14',
+      startTime: '2026-09-13T22:02:00Z',
+      endTime: '2026-09-14T06:07:00Z',
+      minutesAsleep: 411,
+      minutesAwake: 74,
+      stageMinutes: { DEEP: 78, REM: 73, LIGHT: 200, AWAKE: 74 },
+    };
+    upsertSleepNights(TEST_USER, [night]);
+    upsertSleepNights(TEST_USER, [{ ...night, minutesAsleep: 420 }]);
+    const rows = db.prepare('SELECT minutes_asleep as minutesAsleep FROM sleep_nights WHERE user_id = ?').all(TEST_USER) as Array<{
+      minutesAsleep: number;
+    }>;
+    expect(rows).toHaveLength(1);
+    expect(rows[0].minutesAsleep).toBe(420);
+  });
+
+  it('stores each sleep stage in its own column', () => {
+    upsertSleepNights(TEST_USER, [
+      {
+        date: '2026-09-14',
+        startTime: '2026-09-13T22:02:00Z',
+        endTime: '2026-09-14T06:07:00Z',
+        minutesAsleep: 411,
+        minutesAwake: 74,
+        stageMinutes: { DEEP: 78, REM: 73, LIGHT: 260 },
+      },
+    ]);
+    const row = db.prepare('SELECT stage_deep, stage_light, stage_rem, stage_awake FROM sleep_nights WHERE user_id = ?').get(TEST_USER) as {
+      stage_deep: number;
+      stage_light: number;
+      stage_rem: number;
+      stage_awake: number;
+    };
+    expect(row).toEqual({ stage_deep: 78, stage_light: 260, stage_rem: 73, stage_awake: 0 });
   });
 });
 

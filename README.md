@@ -7,10 +7,12 @@ docker compose build
 docker compose up
 ```
 
-Before running, set the backend's real secrets in `server/.env` (see `server/.env.example`) — `docker-compose.yml` loads that file directly. Two values need to match how you actually reach the container:
+Before running, set the backend's real secrets in `server/.env` (see `server/.env.example`) — `docker-compose.yml` loads that file directly. `docker-compose.yml` maps host port **5173** to the container's internal 8787, so it works out of the box with the redirect URI local dev already registered in Google Cloud Console:
 
-- `OAUTH_REDIRECT_URI` — must be `http://<host>:8787/callback` and match an Authorized redirect URI on the OAuth client in Google Cloud Console.
-- `FRONTEND_ORIGIN` — the origin you load the app from, e.g. `http://localhost:8787` (frontend and backend share one origin in the container, unlike local dev where Vite proxies to a separate backend port).
+- `OAUTH_REDIRECT_URI=http://localhost:5173/callback`
+- `FRONTEND_ORIGIN=http://localhost:5173`
+
+If you'd rather serve it on a different host/port, change the `ports` mapping in `docker-compose.yml` to match, update these two values accordingly, and add the new redirect URI as an *additional* Authorized redirect URI on the OAuth client (Google allows more than one, so local `pnpm dev` keeps working too).
 
 The SQLite database persists in the `health-data` named volume across restarts. `NODE_ENV=production` is intentionally **not** set in the image — `server/src/session.ts` marks the session cookie `Secure` only when it is, and browsers refuse `Secure` cookies over plain HTTP. Running on `localhost`/a trusted LAN over HTTP works as shipped; if you expose the container beyond that, put a TLS-terminating reverse proxy in front and set `NODE_ENV=production` yourself so the cookie gets the `Secure` attribute.
 
@@ -18,7 +20,7 @@ Without compose:
 
 ```sh
 docker build -t health-dashboard .
-docker run -p 8787:8787 --env-file server/.env -v health-data:/app/data health-dashboard
+docker run -p 5173:8787 --env-file server/.env -v health-data:/app/data health-dashboard
 ```
 
 # React + TypeScript + Vite

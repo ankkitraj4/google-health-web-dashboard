@@ -8,6 +8,7 @@ import {
   upsertRestingHr,
   upsertHrv,
   upsertSpo2Daily,
+  upsertNutritionLogs,
   normalizeSleep,
   upsertSleepNights,
   latestDate,
@@ -20,6 +21,7 @@ import type {
   TimeInHeartRateZoneRollupDataPoint,
   RestingHrDataPoint,
   HrvDataPoint,
+  NutritionLogDataPoint,
   SleepDataPoint,
   ExerciseDataPoint,
 } from '../src/google-health.js';
@@ -32,6 +34,7 @@ beforeEach(() => {
   db.exec('DELETE FROM sleep_nights');
   db.exec('DELETE FROM hrv_daily');
   db.exec('DELETE FROM spo2_daily');
+  db.exec('DELETE FROM nutrition_logs');
   db.exec('DELETE FROM users');
   // node:sqlite's DatabaseSync enforces FOREIGN KEY constraints by default —
   // metrics/exercise_sessions/sleep_nights.user_id all reference users(id).
@@ -179,6 +182,36 @@ describe('upsertSpo2Daily', () => {
       { date: '2026-09-15', avg_percentage: 92, min_percentage: 92, max_percentage: 92, sample_count: 1 },
       { date: '2026-09-16', avg_percentage: 95, min_percentage: 94, max_percentage: 96, sample_count: 2 },
     ]);
+  });
+});
+
+describe('upsertNutritionLogs', () => {
+  it('is idempotent on Google-provided record name and extracts protein from the nutrients array (M11 — "nutrition-log", not "nutrition", was the real data type name)', () => {
+    const point: NutritionLogDataPoint = {
+      name: 'users/x/dataTypes/nutrition-log/dataPoints/6522603451112558366',
+      nutritionLog: {
+        interval: { startTime: '2026-09-16T11:15:00Z', endTime: '2026-09-16T11:45:00Z' },
+        mealType: 'LUNCH',
+        foodDisplayName: 'Air-fried Salmon',
+        energy: { kcal: 210 },
+        totalCarbohydrate: { grams: 0 },
+        totalFat: { grams: 11 },
+        nutrients: [{ nutrient: 'PROTEIN', quantity: { grams: 25 } }],
+      },
+    };
+    expect(upsertNutritionLogs(TEST_USER, [point])).toBe(1);
+    expect(upsertNutritionLogs(TEST_USER, [point])).toBe(1);
+    const rows = db.prepare('SELECT * FROM nutrition_logs WHERE user_id = ?').all(TEST_USER);
+    expect(rows).toHaveLength(1);
+    const row = rows[0] as Record<string, unknown>;
+    expect(row.meal_type).toBe('LUNCH');
+    expect(row.food_name).toBe('Air-fried Salmon');
+    expect(row.energy_kcal).toBe(210);
+    expect(row.protein_g).toBe(25);
+  });
+
+  it('skips a point with no source name/start/end', () => {
+    expect(upsertNutritionLogs(TEST_USER, [{ nutritionLog: { mealType: 'LUNCH' } }])).toBe(0);
   });
 });
 

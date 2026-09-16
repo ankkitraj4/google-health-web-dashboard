@@ -8,6 +8,7 @@ import type {
   TimeInHeartRateZoneRollupDataPoint,
   RestingHrDataPoint,
   HrvDataPoint,
+  NutritionLogDataPoint,
   SleepDataPoint,
   ExerciseDataPoint,
 } from './google-health.js';
@@ -73,6 +74,24 @@ db.exec(`
     stage_awake INTEGER NOT NULL DEFAULT 0,
     updated_at INTEGER NOT NULL,
     PRIMARY KEY (user_id, date)
+  );
+
+  -- One row per logged meal, keyed by Google's own record id like
+  -- exercise_sessions — a person can log several meals a day, so this
+  -- isn't a single daily scalar (plan milestone M11).
+  CREATE TABLE IF NOT EXISTS nutrition_logs (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    source_id TEXT NOT NULL,
+    start_time INTEGER NOT NULL,
+    end_time INTEGER NOT NULL,
+    meal_type TEXT,
+    food_name TEXT,
+    energy_kcal REAL,
+    carbs_g REAL,
+    fat_g REAL,
+    protein_g REAL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, source_id)
   );
 `);
 
@@ -329,6 +348,48 @@ export function upsertSpo2Daily(userId: string, samples: Array<{ time: string; p
     upsertSpo2Stmt.run(userId, date, avg, Math.min(...values), Math.max(...values), values.length, now);
   }
   return byDate.size;
+}
+
+const upsertNutritionLogStmt = db.prepare(
+  `INSERT INTO nutrition_logs (user_id, source_id, start_time, end_time, meal_type, food_name, energy_kcal, carbs_g, fat_g, protein_g, updated_at)
+   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+   ON CONFLICT(user_id, source_id) DO UPDATE SET
+     end_time = excluded.end_time,
+     meal_type = excluded.meal_type,
+     food_name = excluded.food_name,
+     energy_kcal = excluded.energy_kcal,
+     carbs_g = excluded.carbs_g,
+     fat_g = excluded.fat_g,
+     protein_g = excluded.protein_g,
+     updated_at = excluded.updated_at`
+);
+
+export function upsertNutritionLogs(userId: string, points: NutritionLogDataPoint[]): number {
+  const now = Date.now();
+  let count = 0;
+  for (const p of points) {
+    const log = p.nutritionLog;
+    const sourceId = p.name;
+    const start = log?.interval?.startTime;
+    const end = log?.interval?.endTime;
+    if (!sourceId || !start || !end) continue;
+    const protein = log?.nutrients?.find((n) => n.nutrient === 'PROTEIN')?.quantity?.grams ?? null;
+    upsertNutritionLogStmt.run(
+      userId,
+      sourceId,
+      new Date(start).getTime(),
+      new Date(end).getTime(),
+      log?.mealType ?? null,
+      log?.foodDisplayName ?? null,
+      log?.energy?.kcal ?? null,
+      log?.totalCarbohydrate?.grams ?? null,
+      log?.totalFat?.grams ?? null,
+      protein,
+      now
+    );
+    count++;
+  }
+  return count;
 }
 
 export interface SleepNight {

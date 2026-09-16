@@ -8,6 +8,7 @@ import {
   fetchRestingHrList,
   fetchHrvList,
   fetchOxygenSaturationSamples,
+  fetchNutritionLogList,
   fetchSleepList,
   fetchExerciseList,
   type DayRange,
@@ -22,6 +23,7 @@ import {
   upsertRestingHr,
   upsertHrv,
   upsertSpo2Daily,
+  upsertNutritionLogs,
   normalizeSleep,
   upsertSleepNights,
   upsertExerciseSessions,
@@ -178,6 +180,14 @@ export async function runBackfill(userId: string, accessToken: string, totalDays
   }
 
   try {
+    const points = await fetchNutritionLogList(accessToken, totalDays);
+    const count = upsertNutritionLogs(userId, points);
+    results.push({ metric: 'nutrition', chunks: 1, pointsUpserted: count });
+  } catch (err) {
+    results.push({ metric: 'nutrition', chunks: 0, pointsUpserted: 0, error: describeError(err) });
+  }
+
+  try {
     const points = await fetchExerciseList(accessToken, totalDays);
     const sessions = upsertExerciseSessions(userId, points);
     results.push({ metric: 'exercise', chunks: 1, pointsUpserted: sessions.length });
@@ -252,6 +262,12 @@ export async function refreshMetricWindow(
       const points = await fetchSleepList(accessToken, daysBack);
       const nights = upsertSleepNights(userId, normalizeSleep(points));
       return { metric: 'sleep', pointsUpserted: nights.length };
+    }
+    case 'nutrition-log': {
+      const daysBack = Math.max(range.startDaysBack, 1);
+      const points = await fetchNutritionLogList(accessToken, daysBack);
+      const count = upsertNutritionLogs(userId, points);
+      return { metric: 'nutrition', pointsUpserted: count };
     }
     case 'exercise': {
       const daysBack = Math.max(range.startDaysBack, 1);

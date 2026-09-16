@@ -396,3 +396,42 @@ export async function fetchOxygenSaturationSamples(accessToken: string, daysBack
   } while (pageToken);
   return samples;
 }
+
+// Confirmed live (M11): the OAuth scope (googlehealth.nutrition.readonly)
+// was granted from the start, but the data type is named "nutrition-log",
+// not "nutrition" — the plain name 400s with "Invalid data type ID". The
+// sibling "food" data type is a food-catalog lookup (brand, per-100g
+// nutrient facts), not a personal log entry, so it isn't fetched here.
+export interface NutritionLogDataPoint {
+  name?: string;
+  nutritionLog?: {
+    interval?: { startTime?: string; endTime?: string };
+    mealType?: string;
+    foodDisplayName?: string;
+    energy?: { kcal?: number };
+    totalCarbohydrate?: { grams?: number };
+    totalFat?: { grams?: number };
+    nutrients?: Array<{ nutrient: string; quantity?: { grams?: number } }>;
+  };
+}
+
+export async function fetchNutritionLogList(accessToken: string, daysBack: number): Promise<NutritionLogDataPoint[]> {
+  const startDate = new Date();
+  startDate.setDate(startDate.getDate() - daysBack);
+  const filter = `nutrition_log.interval.civil_start_time >= "${startDate.toISOString().split('T')[0]}"`;
+  const results: NutritionLogDataPoint[] = [];
+  let pageToken: string | undefined;
+  do {
+    const params = new URLSearchParams({ filter, page_size: '100' });
+    if (pageToken) params.set('page_token', pageToken);
+    const data = await withRetry(() =>
+      healthFetch<{ dataPoints?: NutritionLogDataPoint[]; nextPageToken?: string }>(
+        `/users/me/dataTypes/nutrition-log/dataPoints?${params}`,
+        accessToken
+      )
+    );
+    results.push(...(data.dataPoints ?? []));
+    pageToken = data.nextPageToken;
+  } while (pageToken);
+  return results;
+}

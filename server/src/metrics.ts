@@ -10,6 +10,12 @@ import type {
   HrvDataPoint,
   NutritionLogDataPoint,
   PairedDevice,
+  SleepTemperatureDataPoint,
+  RespiratoryRateDataPoint,
+  HydrationLogDataPoint,
+  BasalEnergyBurnedDataPoint,
+  AltitudeRollupDataPoint,
+  FloorsRollupDataPoint,
   SleepDataPoint,
   ExerciseDataPoint,
 } from './google-health.js';
@@ -616,4 +622,150 @@ export function upsertExerciseSessions(userId: string, points: ExerciseDataPoint
     results.push(session);
   }
   return results;
+}
+
+// --- M13: metrics built against ghealth CLI schemas rather than confirmed
+// live response bodies (see the fetchers' comments in google-health.ts) ---
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS temperature_daily (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    date TEXT NOT NULL,
+    nightly_c REAL NOT NULL,
+    baseline_c REAL,
+    stddev_30d_c REAL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, date)
+  );
+
+  CREATE TABLE IF NOT EXISTS core_temp_daily (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    date TEXT NOT NULL,
+    avg_c REAL NOT NULL,
+    min_c REAL NOT NULL,
+    max_c REAL NOT NULL,
+    sample_count INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, date)
+  );
+`);
+
+const upsertSleepTempStmt = db.prepare(
+  `INSERT INTO temperature_daily (user_id, date, nightly_c, baseline_c, stddev_30d_c, updated_at)
+   VALUES (?, ?, ?, ?, ?, ?)
+   ON CONFLICT(user_id, date) DO UPDATE SET
+     nightly_c = excluded.nightly_c,
+     baseline_c = excluded.baseline_c,
+     stddev_30d_c = excluded.stddev_30d_c,
+     updated_at = excluded.updated_at`
+);
+
+// Google's proto3 JSON encoding represents an unrepresentable double as the
+// *string* "NaN"/"Infinity"/"-Infinity" (confirmed live: baseline/stddev
+// arrive this way for the first ~2 days of an account, before 30 days of
+// history exist to compute them) — `?? null` alone lets that string through
+// unchanged, since it's neither null nor undefined.
+function finiteOrNull(value: number | string | null | undefined): number | null {
+  if (value == null) return null;
+  const n = typeof value === 'string' ? Number(value) : value;
+  return Number.isFinite(n) ? n : null;
+}
+
+export function upsertSleepTemperature(userId: string, points: SleepTemperatureDataPoint[]): number {
+  const now = Date.now();
+  let count = 0;
+  for (const p of points) {
+    const t = p.dailySleepTemperatureDerivations;
+    if (!t?.date || t.nightlyTemperatureCelsius == null) continue;
+    upsertSleepTempStmt.run(userId, isoDate(t.date), t.nightlyTemperatureCelsius, finiteOrNull(t.baselineTemperatureCelsius), finiteOrNull(t.relativeNightlyStddev30dCelsius), now);
+    count++;
+  }
+  return count;
+}
+
+export function upsertRespiratoryRate(userId: string, points: RespiratoryRateDataPoint[]): DailyPoint[] {
+  return upsertDaily(
+    userId,
+    'respiratory-rate',
+    'breaths/min',
+    points
+      .filter((p) => p.dailyRespiratoryRate?.date && p.dailyRespiratoryRate?.breathsPerMinute != null)
+      .map((p) => ({ start: p.dailyRespiratoryRate!.date, value: p.dailyRespiratoryRate!.breathsPerMinute! }))
+  );
+}
+
+const upsertCoreTempStmt = db.prepare(
+  `INSERT INTO core_temp_daily (user_id, date, avg_c, min_c, max_c, sample_count, updated_at)
+   VALUES (?, ?, ?, ?, ?, ?, ?)
+   ON CONFLICT(user_id, date) DO UPDATE SET
+     avg_c = excluded.avg_c,
+     min_c = excluded.min_c,
+     max_c = excluded.max_c,
+     sample_count = excluded.sample_count,
+     updated_at = excluded.updated_at`
+);
+
+export function upsertCoreBodyTemperature(userId: string, samples: Array<{ time: string; celsius: number }>): number {
+  const byDate = new Map<string, number[]>();
+  for (const s of samples) {
+    const date = s.time.slice(0, 10);
+    const list = byDate.get(date) ?? [];
+    list.push(s.celsius);
+    byDate.set(date, list);
+  }
+  const now = Date.now();
+  for (const [date, values] of byDate) {
+    const avg = values.reduce((sum, v) => sum + v, 0) / values.length;
+    upsertCoreTempStmt.run(userId, date, avg, Math.min(...values), Math.max(...values), values.length, now);
+  }
+  return byDate.size;
+}
+
+// Shared by hydration-log and basal-energy-burned: neither supports
+// dailyRollUp (confirmed via the ghealth CLI schema — both are list-only),
+// so both are list-fetched and summed per civil day here instead.
+function sumIntervalValuesByDay(entries: Array<{ startTime: string; value: number }>): Array<{ start: { year: number; month: number; day: number }; value: number }> {
+  const byDate = new Map<string, number>();
+  for (const e of entries) {
+    const date = e.startTime.slice(0, 10);
+    byDate.set(date, (byDate.get(date) ?? 0) + e.value);
+  }
+  const results: Array<{ start: { year: number; month: number; day: number }; value: number }> = [];
+  for (const [date, value] of byDate) {
+    const [year, month, day] = date.split('-').map(Number);
+    results.push({ start: { year, month, day }, value });
+  }
+  return results;
+}
+
+export function upsertHydrationLogs(userId: string, points: HydrationLogDataPoint[]): DailyPoint[] {
+  const entries = points
+    .filter((p) => p.hydrationLog?.interval?.startTime && p.hydrationLog?.amountConsumed?.milliliters != null)
+    .map((p) => ({ startTime: p.hydrationLog!.interval!.startTime!, value: p.hydrationLog!.amountConsumed!.milliliters! }));
+  return upsertDaily(userId, 'hydration', 'ml', sumIntervalValuesByDay(entries));
+}
+
+export function upsertBasalEnergyBurned(userId: string, points: BasalEnergyBurnedDataPoint[]): DailyPoint[] {
+  const entries = points
+    .filter((p) => p.basalEnergyBurned?.interval?.startTime && p.basalEnergyBurned?.kcal != null)
+    .map((p) => ({ startTime: p.basalEnergyBurned!.interval!.startTime!, value: p.basalEnergyBurned!.kcal! }));
+  return upsertDaily(userId, 'basal-energy-burned', 'kcal', sumIntervalValuesByDay(entries));
+}
+
+export function upsertAltitudeRollup(userId: string, points: AltitudeRollupDataPoint[]): DailyPoint[] {
+  return upsertDaily(
+    userId,
+    'altitude',
+    'mm',
+    points.map((p) => ({ start: p.civilStartTime?.date, end: p.civilEndTime?.date, value: Number(p.altitude?.gainMillimetersSum ?? 0) }))
+  );
+}
+
+export function upsertFloorsRollup(userId: string, points: FloorsRollupDataPoint[]): DailyPoint[] {
+  return upsertDaily(
+    userId,
+    'floors',
+    'count',
+    points.map((p) => ({ start: p.civilStartTime?.date, end: p.civilEndTime?.date, value: Number(p.floors?.countSum ?? 0) }))
+  );
 }

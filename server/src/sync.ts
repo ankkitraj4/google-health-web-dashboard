@@ -10,6 +10,13 @@ import {
   fetchOxygenSaturationSamples,
   fetchNutritionLogList,
   fetchPairedDevices,
+  fetchSleepTemperatureList,
+  fetchRespiratoryRateList,
+  fetchCoreBodyTemperatureSamples,
+  fetchHydrationLogList,
+  fetchBasalEnergyBurnedList,
+  fetchAltitudeDailyRollup,
+  fetchFloorsDailyRollup,
   fetchSleepList,
   fetchExerciseList,
   type DayRange,
@@ -26,6 +33,13 @@ import {
   upsertSpo2Daily,
   upsertNutritionLogs,
   upsertDeviceSnapshots,
+  upsertSleepTemperature,
+  upsertRespiratoryRate,
+  upsertCoreBodyTemperature,
+  upsertHydrationLogs,
+  upsertBasalEnergyBurned,
+  upsertAltitudeRollup,
+  upsertFloorsRollup,
   normalizeSleep,
   upsertSleepNights,
   upsertExerciseSessions,
@@ -195,6 +209,70 @@ export async function runBackfill(userId: string, accessToken: string, totalDays
     results.push({ metric: 'device', chunks: 1, pointsUpserted: count });
   } catch (err) {
     results.push({ metric: 'device', chunks: 0, pointsUpserted: 0, error: describeError(err) });
+  }
+
+  try {
+    const points = await fetchSleepTemperatureList(accessToken, totalDays);
+    const count = upsertSleepTemperature(userId, points);
+    results.push({ metric: 'temperature', chunks: 1, pointsUpserted: count });
+  } catch (err) {
+    results.push({ metric: 'temperature', chunks: 0, pointsUpserted: 0, error: describeError(err) });
+  }
+
+  try {
+    const points = await fetchRespiratoryRateList(accessToken, totalDays);
+    const result = upsertRespiratoryRate(userId, points);
+    results.push({ metric: 'respiratory-rate', chunks: 1, pointsUpserted: result.length });
+  } catch (err) {
+    results.push({ metric: 'respiratory-rate', chunks: 0, pointsUpserted: 0, error: describeError(err) });
+  }
+
+  try {
+    const samples = await fetchCoreBodyTemperatureSamples(accessToken, totalDays);
+    const days = upsertCoreBodyTemperature(userId, samples);
+    results.push({ metric: 'core-body-temperature', chunks: 1, pointsUpserted: days });
+  } catch (err) {
+    results.push({ metric: 'core-body-temperature', chunks: 0, pointsUpserted: 0, error: describeError(err) });
+  }
+
+  try {
+    const points = await fetchHydrationLogList(accessToken, totalDays);
+    const result = upsertHydrationLogs(userId, points);
+    results.push({ metric: 'hydration', chunks: 1, pointsUpserted: result.length });
+  } catch (err) {
+    results.push({ metric: 'hydration', chunks: 0, pointsUpserted: 0, error: describeError(err) });
+  }
+
+  try {
+    const points = await fetchBasalEnergyBurnedList(accessToken, totalDays);
+    const result = upsertBasalEnergyBurned(userId, points);
+    results.push({ metric: 'basal-energy-burned', chunks: 1, pointsUpserted: result.length });
+  } catch (err) {
+    results.push({ metric: 'basal-energy-burned', chunks: 0, pointsUpserted: 0, error: describeError(err) });
+  }
+
+  try {
+    let pointsUpserted = 0;
+    for (const range of ranges) {
+      const points = await fetchAltitudeDailyRollup(accessToken, range);
+      upsertAltitudeRollup(userId, points);
+      pointsUpserted += points.length;
+    }
+    results.push({ metric: 'altitude', chunks: ranges.length, pointsUpserted });
+  } catch (err) {
+    results.push({ metric: 'altitude', chunks: 0, pointsUpserted: 0, error: describeError(err) });
+  }
+
+  try {
+    let pointsUpserted = 0;
+    for (const range of ranges) {
+      const points = await fetchFloorsDailyRollup(accessToken, range);
+      upsertFloorsRollup(userId, points);
+      pointsUpserted += points.length;
+    }
+    results.push({ metric: 'floors', chunks: ranges.length, pointsUpserted });
+  } catch (err) {
+    results.push({ metric: 'floors', chunks: 0, pointsUpserted: 0, error: describeError(err) });
   }
 
   try {

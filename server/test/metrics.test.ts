@@ -10,6 +10,13 @@ import {
   upsertSpo2Daily,
   upsertNutritionLogs,
   upsertDeviceSnapshots,
+  upsertSleepTemperature,
+  upsertRespiratoryRate,
+  upsertCoreBodyTemperature,
+  upsertHydrationLogs,
+  upsertBasalEnergyBurned,
+  upsertAltitudeRollup,
+  upsertFloorsRollup,
   normalizeSleep,
   upsertSleepNights,
   latestDate,
@@ -24,6 +31,12 @@ import type {
   HrvDataPoint,
   NutritionLogDataPoint,
   PairedDevice,
+  SleepTemperatureDataPoint,
+  RespiratoryRateDataPoint,
+  HydrationLogDataPoint,
+  BasalEnergyBurnedDataPoint,
+  AltitudeRollupDataPoint,
+  FloorsRollupDataPoint,
   SleepDataPoint,
   ExerciseDataPoint,
 } from '../src/google-health.js';
@@ -38,6 +51,8 @@ beforeEach(() => {
   db.exec('DELETE FROM spo2_daily');
   db.exec('DELETE FROM nutrition_logs');
   db.exec('DELETE FROM device_snapshots');
+  db.exec('DELETE FROM temperature_daily');
+  db.exec('DELETE FROM core_temp_daily');
   db.exec('DELETE FROM users');
   // node:sqlite's DatabaseSync enforces FOREIGN KEY constraints by default —
   // metrics/exercise_sessions/sleep_nights.user_id all reference users(id).
@@ -324,6 +339,107 @@ describe('upsertDeviceSnapshots', () => {
 
   it('skips a device with no type or no lastSyncTime', () => {
     expect(upsertDeviceSnapshots(TEST_USER, [{ deviceType: 'TRACKER' }])).toBe(0);
+  });
+});
+
+describe('upsertSleepTemperature', () => {
+  it('is idempotent on date and stores nightly/baseline/stddev (M13 — schema from the ghealth CLI, matches real data confirmed live)', () => {
+    const points: SleepTemperatureDataPoint[] = [
+      {
+        dailySleepTemperatureDerivations: {
+          date: { year: 2026, month: 9, day: 16 },
+          nightlyTemperatureCelsius: 33.8,
+          baselineTemperatureCelsius: 33.55,
+          relativeNightlyStddev30dCelsius: 0.28,
+        },
+      },
+    ];
+    expect(upsertSleepTemperature(TEST_USER, points)).toBe(1);
+    expect(upsertSleepTemperature(TEST_USER, points)).toBe(1);
+    const rows = db.prepare('SELECT * FROM temperature_daily WHERE user_id = ?').all(TEST_USER);
+    expect(rows).toHaveLength(1);
+    const row = rows[0] as Record<string, unknown>;
+    expect(row.nightly_c).toBe(33.8);
+    expect(row.baseline_c).toBe(33.55);
+  });
+
+  it('skips a point missing a date or the required nightly value', () => {
+    expect(upsertSleepTemperature(TEST_USER, [{ dailySleepTemperatureDerivations: {} }])).toBe(0);
+  });
+
+  it('stores NULL, not the literal string "NaN", for a new account\'s first ~2 days (confirmed live: Google\'s proto3 JSON sends "NaN" for baseline/stddev before 30 days of history exist)', () => {
+    const points: SleepTemperatureDataPoint[] = [
+      {
+        dailySleepTemperatureDerivations: {
+          date: { year: 2026, month: 9, day: 12 },
+          nightlyTemperatureCelsius: 33.07,
+          baselineTemperatureCelsius: 'NaN',
+          relativeNightlyStddev30dCelsius: 'NaN',
+        },
+      },
+    ];
+    upsertSleepTemperature(TEST_USER, points);
+    const row = db.prepare('SELECT baseline_c, stddev_30d_c FROM temperature_daily WHERE user_id = ?').get(TEST_USER);
+    expect(row).toEqual({ baseline_c: null, stddev_30d_c: null });
+  });
+});
+
+describe('upsertRespiratoryRate', () => {
+  it('parses the real dailyRespiratoryRate shape (M13, confirmed live)', () => {
+    const points: RespiratoryRateDataPoint[] = [
+      { dailyRespiratoryRate: { date: { year: 2026, month: 9, day: 16 }, breathsPerMinute: 16 } },
+    ];
+    expect(upsertRespiratoryRate(TEST_USER, points)).toEqual([{ date: '2026-09-16', value: 16 }]);
+  });
+});
+
+describe('upsertCoreBodyTemperature', () => {
+  it('aggregates raw samples into one avg/min/max row per calendar day, same shape as SpO2 (M13 — core-body-temperature has no dailyRollUp support per the ghealth CLI schema)', () => {
+    const samples = [
+      { time: '2026-09-16T05:00:00Z', celsius: 36.5 },
+      { time: '2026-09-16T05:01:00Z', celsius: 36.7 },
+    ];
+    expect(upsertCoreBodyTemperature(TEST_USER, samples)).toBe(1);
+    const row = db.prepare('SELECT avg_c, min_c, max_c, sample_count FROM core_temp_daily WHERE user_id = ?').get(TEST_USER);
+    expect(row).toEqual({ avg_c: 36.6, min_c: 36.5, max_c: 36.7, sample_count: 2 });
+  });
+});
+
+describe('upsertHydrationLogs', () => {
+  it('sums milliliters per civil day (hydration-log has no dailyRollUp support — list-only per the ghealth CLI schema)', () => {
+    const points: HydrationLogDataPoint[] = [
+      { hydrationLog: { interval: { startTime: '2026-09-16T08:00:00Z' }, amountConsumed: { milliliters: 250 } } },
+      { hydrationLog: { interval: { startTime: '2026-09-16T12:00:00Z' }, amountConsumed: { milliliters: 300 } } },
+    ];
+    expect(upsertHydrationLogs(TEST_USER, points)).toEqual([{ date: '2026-09-16', value: 550 }]);
+  });
+});
+
+describe('upsertBasalEnergyBurned', () => {
+  it('sums kcal per civil day (basal-energy-burned is list-only, same as hydration-log)', () => {
+    const points: BasalEnergyBurnedDataPoint[] = [
+      { basalEnergyBurned: { interval: { startTime: '2026-09-16T00:00:00Z' }, kcal: 40 } },
+      { basalEnergyBurned: { interval: { startTime: '2026-09-16T01:00:00Z' }, kcal: 38 } },
+    ];
+    expect(upsertBasalEnergyBurned(TEST_USER, points)).toEqual([{ date: '2026-09-16', value: 78 }]);
+  });
+});
+
+describe('upsertAltitudeRollup', () => {
+  it('parses the inferred gainMillimetersSum rollup field (M13 — no real data to confirm the exact Sum field name against, see google-health.ts)', () => {
+    const points: AltitudeRollupDataPoint[] = [
+      { civilStartTime: { date: { year: 2026, month: 9, day: 16 } }, altitude: { gainMillimetersSum: '1500' } },
+    ];
+    expect(upsertAltitudeRollup(TEST_USER, points)).toEqual([{ date: '2026-09-16', value: 1500 }]);
+  });
+});
+
+describe('upsertFloorsRollup', () => {
+  it('parses the inferred countSum rollup field (M13 — no real data to confirm against)', () => {
+    const points: FloorsRollupDataPoint[] = [
+      { civilStartTime: { date: { year: 2026, month: 9, day: 16 } }, floors: { countSum: '8' } },
+    ];
+    expect(upsertFloorsRollup(TEST_USER, points)).toEqual([{ date: '2026-09-16', value: 8 }]);
   });
 });
 

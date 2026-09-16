@@ -453,3 +453,180 @@ export async function fetchPairedDevices(accessToken: string): Promise<PairedDev
   const data = await withRetry(() => healthFetch<{ pairedDevices?: PairedDevice[] }>('/users/me/pairedDevices', accessToken));
   return data.pairedDevices ?? [];
 }
+
+// The remaining fetchers below (M13) were built against field schemas from
+// the official `ghealth` CLI's `schema type <id>` command
+// (github.com/Google-Health-API/google-health-cli), not live response
+// bodies — the account has zero recorded data for several of these types,
+// so there was nothing to confirm shapes against directly. `vo2-max`
+// (distinct from `daily-vo2-max`, which this project already uses) has no
+// field schema even in that tool and zero data, so it's deliberately not
+// implemented rather than guessed.
+
+// Confirmed live: proto3 JSON encodes an unrepresentable double as the
+// *string* "NaN" (its documented mapping for non-finite values), not a
+// bare number — Google sends this literally for baseline/stddev on the
+// first ~2 days of a new account, before 30 days of history exist to
+// compute them from. A plain `number` type here would let that string
+// flow straight into a REAL column; see finiteOrNull below.
+type PossiblyNaN = number | 'NaN' | 'Infinity' | '-Infinity';
+
+export interface SleepTemperatureDataPoint {
+  dailySleepTemperatureDerivations?: {
+    date?: { year: number; month: number; day: number };
+    nightlyTemperatureCelsius?: number;
+    baselineTemperatureCelsius?: PossiblyNaN;
+    relativeNightlyStddev30dCelsius?: PossiblyNaN;
+  };
+}
+
+export async function fetchSleepTemperatureList(accessToken: string, daysBack: number): Promise<SleepTemperatureDataPoint[]> {
+  const startDate = new Date();
+  startDate.setDate(startDate.getDate() - daysBack);
+  const filter = `daily_sleep_temperature_derivations.date >= "${startDate.toISOString().split('T')[0]}"`;
+  const results: SleepTemperatureDataPoint[] = [];
+  let pageToken: string | undefined;
+  do {
+    const params = new URLSearchParams({ filter, page_size: '100' });
+    if (pageToken) params.set('page_token', pageToken);
+    const data = await withRetry(() =>
+      healthFetch<{ dataPoints?: SleepTemperatureDataPoint[]; nextPageToken?: string }>(
+        `/users/me/dataTypes/daily-sleep-temperature-derivations/dataPoints?${params}`,
+        accessToken
+      )
+    );
+    results.push(...(data.dataPoints ?? []));
+    pageToken = data.nextPageToken;
+  } while (pageToken);
+  return results;
+}
+
+export interface RespiratoryRateDataPoint {
+  dailyRespiratoryRate?: { date?: { year: number; month: number; day: number }; breathsPerMinute?: number };
+}
+
+export async function fetchRespiratoryRateList(accessToken: string, daysBack: number): Promise<RespiratoryRateDataPoint[]> {
+  const startDate = new Date();
+  startDate.setDate(startDate.getDate() - daysBack);
+  const filter = `daily_respiratory_rate.date >= "${startDate.toISOString().split('T')[0]}"`;
+  const results: RespiratoryRateDataPoint[] = [];
+  let pageToken: string | undefined;
+  do {
+    const params = new URLSearchParams({ filter, page_size: '100' });
+    if (pageToken) params.set('page_token', pageToken);
+    const data = await withRetry(() =>
+      healthFetch<{ dataPoints?: RespiratoryRateDataPoint[]; nextPageToken?: string }>(
+        `/users/me/dataTypes/daily-respiratory-rate/dataPoints?${params}`,
+        accessToken
+      )
+    );
+    results.push(...(data.dataPoints ?? []));
+    pageToken = data.nextPageToken;
+  } while (pageToken);
+  return results;
+}
+
+export interface CoreBodyTemperatureDataPoint {
+  coreBodyTemperature?: { sampleTime?: { physicalTime?: string }; temperatureCelsius?: number };
+}
+
+export async function fetchCoreBodyTemperatureSamples(accessToken: string, daysBack: number): Promise<Array<{ time: string; celsius: number }>> {
+  const startDate = new Date();
+  startDate.setDate(startDate.getDate() - daysBack);
+  const filter = `core_body_temperature.sample_time.physical_time >= "${startDate.toISOString()}"`;
+  const samples: Array<{ time: string; celsius: number }> = [];
+  let pageToken: string | undefined;
+  do {
+    const params = new URLSearchParams({ filter, page_size: '1000' });
+    if (pageToken) params.set('page_token', pageToken);
+    const data = await withRetry(() =>
+      healthFetch<{ dataPoints?: CoreBodyTemperatureDataPoint[]; nextPageToken?: string }>(
+        `/users/me/dataTypes/core-body-temperature/dataPoints?${params}`,
+        accessToken
+      )
+    );
+    for (const d of data.dataPoints ?? []) {
+      if (d.coreBodyTemperature?.sampleTime?.physicalTime && d.coreBodyTemperature?.temperatureCelsius != null) {
+        samples.push({ time: d.coreBodyTemperature.sampleTime.physicalTime, celsius: d.coreBodyTemperature.temperatureCelsius });
+      }
+    }
+    pageToken = data.nextPageToken;
+  } while (pageToken);
+  return samples;
+}
+
+export interface HydrationLogDataPoint {
+  hydrationLog?: { interval?: { startTime?: string; endTime?: string }; amountConsumed?: { milliliters?: number } };
+}
+
+export async function fetchHydrationLogList(accessToken: string, daysBack: number): Promise<HydrationLogDataPoint[]> {
+  const startDate = new Date();
+  startDate.setDate(startDate.getDate() - daysBack);
+  const filter = `hydration_log.interval.civil_start_time >= "${startDate.toISOString().split('T')[0]}"`;
+  const results: HydrationLogDataPoint[] = [];
+  let pageToken: string | undefined;
+  do {
+    const params = new URLSearchParams({ filter, page_size: '100' });
+    if (pageToken) params.set('page_token', pageToken);
+    const data = await withRetry(() =>
+      healthFetch<{ dataPoints?: HydrationLogDataPoint[]; nextPageToken?: string }>(
+        `/users/me/dataTypes/hydration-log/dataPoints?${params}`,
+        accessToken
+      )
+    );
+    results.push(...(data.dataPoints ?? []));
+    pageToken = data.nextPageToken;
+  } while (pageToken);
+  return results;
+}
+
+export interface BasalEnergyBurnedDataPoint {
+  basalEnergyBurned?: { interval?: { startTime?: string; endTime?: string }; kcal?: number };
+}
+
+export async function fetchBasalEnergyBurnedList(accessToken: string, daysBack: number): Promise<BasalEnergyBurnedDataPoint[]> {
+  const startDate = new Date();
+  startDate.setDate(startDate.getDate() - daysBack);
+  const filter = `basal_energy_burned.interval.civil_start_time >= "${startDate.toISOString().split('T')[0]}"`;
+  const results: BasalEnergyBurnedDataPoint[] = [];
+  let pageToken: string | undefined;
+  do {
+    const params = new URLSearchParams({ filter, page_size: '100' });
+    if (pageToken) params.set('page_token', pageToken);
+    const data = await withRetry(() =>
+      healthFetch<{ dataPoints?: BasalEnergyBurnedDataPoint[]; nextPageToken?: string }>(
+        `/users/me/dataTypes/basal-energy-burned/dataPoints?${params}`,
+        accessToken
+      )
+    );
+    results.push(...(data.dataPoints ?? []));
+    pageToken = data.nextPageToken;
+  } while (pageToken);
+  return results;
+}
+
+// Rollup field names below (gainMillimetersSum, countSum) are inferred from
+// the `<perIntervalFieldName>Sum` convention confirmed live on steps
+// (countSum), distance (millimetersSum), and calories (kcalSum) — not
+// confirmed directly, since the account has zero altitude/floors data to
+// check against. If real data ever appears and these read as 0 when they
+// shouldn't, check the actual field name first.
+export interface AltitudeRollupDataPoint {
+  civilStartTime?: { date?: { year: number; month: number; day: number } };
+  civilEndTime?: { date?: { year: number; month: number; day: number } };
+  altitude?: { gainMillimetersSum?: string };
+}
+
+export function fetchAltitudeDailyRollup(accessToken: string, daysBack: number | DayRange) {
+  return fetchDailyRollup<AltitudeRollupDataPoint>(accessToken, 'altitude', daysBack);
+}
+
+export interface FloorsRollupDataPoint {
+  civilStartTime?: { date?: { year: number; month: number; day: number } };
+  civilEndTime?: { date?: { year: number; month: number; day: number } };
+  floors?: { countSum?: string };
+}
+
+export function fetchFloorsDailyRollup(accessToken: string, daysBack: number | DayRange) {
+  return fetchDailyRollup<FloorsRollupDataPoint>(accessToken, 'floors', daysBack);
+}

@@ -329,6 +329,50 @@
           "rawQueryText": "SELECT last_sync_time/1000 as time, battery_level as battery FROM device_snapshots WHERE user_id = (SELECT id FROM users LIMIT 1) ORDER BY last_sync_time"
         }
       ]
+    },
+    {
+      "id": 16,
+      "title": "Skin Temperature (Sleep)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 78 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "health-sqlite" },
+      "fieldConfig": {
+        "defaults": { "unit": "celsius", "custom": { "drawStyle": "line", "fillOpacity": 10, "pointSize": 5, "showPoints": "always" } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "baseline" }, "properties": [{ "id": "custom.lineStyle", "value": { "dash": [10, 10], "fill": "dash" } }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "gray" } }] }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "frser-sqlite-datasource", "uid": "health-sqlite" },
+          "queryType": "time series",
+          "timeColumns": ["time"],
+          "queryText": "SELECT date || 'T00:00:00Z' as time, nightly_c as nightly, baseline_c as baseline FROM temperature_daily WHERE user_id = (SELECT id FROM users LIMIT 1) ORDER BY date",
+          "rawQueryText": "SELECT date || 'T00:00:00Z' as time, nightly_c as nightly, baseline_c as baseline FROM temperature_daily WHERE user_id = (SELECT id FROM users LIMIT 1) ORDER BY date"
+        }
+      ]
+    },
+    {
+      "id": 17,
+      "title": "Respiratory Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 78 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "health-sqlite" },
+      "fieldConfig": {
+        "defaults": { "unit": "none", "custom": { "drawStyle": "line", "fillOpacity": 10, "pointSize": 5, "showPoints": "always" } },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "frser-sqlite-datasource", "uid": "health-sqlite" },
+          "queryType": "time series",
+          "timeColumns": ["time"],
+          "queryText": "SELECT start_time/1000 as time, value as breaths_per_min FROM metrics WHERE metric_type = 'respiratory-rate' AND user_id = (SELECT id FROM users LIMIT 1) ORDER BY start_time",
+          "rawQueryText": "SELECT start_time/1000 as time, value as breaths_per_min FROM metrics WHERE metric_type = 'respiratory-rate' AND user_id = (SELECT id FROM users LIMIT 1) ORDER BY start_time"
+        }
+      ]
     }
   ]
 }

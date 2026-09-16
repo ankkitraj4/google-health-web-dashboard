@@ -1,0 +1,17 @@
+services:
+  health-dashboard:
+    build: .
+    ports:
+      - "8787:8787"
+    env_file:
+      # Reuses your existing server/.env (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET,
+      # TOKEN_ENCRYPTION_KEY, WEBHOOK_AUTH_TOKEN, ...). Update OAUTH_REDIRECT_URI
+      # and FRONTEND_ORIGIN in it to match how you reach the container — see
+      # README.
+      - server/.env
+    volumes:
+      - health-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  health-data:

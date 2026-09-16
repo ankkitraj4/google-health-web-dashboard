@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import path from 'node:path';
 import express from 'express';
 import cookieParser from 'cookie-parser';
 import { attachSession } from './session.js';
@@ -27,6 +28,22 @@ app.use(webhookRouter);
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true });
 });
+
+// Serves the built frontend when running as a single container (see the
+// root Dockerfile, which sets STATIC_DIR) — absent in local dev, where
+// Vite's own dev server serves the frontend and proxies /api, /auth,
+// /callback here instead (see vite.config.ts).
+if (process.env.STATIC_DIR) {
+  const staticDir = process.env.STATIC_DIR;
+  app.use(express.static(staticDir));
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api') || req.path.startsWith('/auth') || req.path === '/callback') {
+      next();
+      return;
+    }
+    res.sendFile(path.join(staticDir, 'index.html'));
+  });
+}
 
 const port = Number(process.env.PORT) || 8787;
 app.listen(port, () => {
